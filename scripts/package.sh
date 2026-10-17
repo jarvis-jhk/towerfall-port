@@ -20,6 +20,10 @@ case "${1:-}" in
 esac
 VER=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 DIST=dist
+# The project venv when bootstrapped, else the system python3 (CI); only the
+# standard library is used.
+PY=tools/venv/bin/python
+[ -x "$PY" ] || PY=python3
 STAGE=target/package/stage
 mkdir -p "$DIST"
 rm -rf "$STAGE"
@@ -43,6 +47,9 @@ common_files() { # $1 = staging dir
   } > "$d/THIRD-PARTY/crates.txt"
 }
 
+# SDL2's licence comes from the SDL2 mingw release (both archives).
+[ -f tools/windows/sdl2/LICENSE.txt ] || scripts/fetch-windows-toolchain.sh
+
 if [ "$WANT_LINUX" = 1 ]; then
   NAME="towerfall-port-$VER-linux-x86_64"
   D="$STAGE/$NAME"
@@ -56,7 +63,7 @@ if [ "$WANT_LINUX" = 1 ]; then
   readelf -d "$D/towerfall-port" | grep -q 'RUNPATH.*\$ORIGIN/lib' \
     || { echo "missing RUNPATH \$ORIGIN/lib" >&2; exit 1; }
   common_files "$D"
-  tools/venv/bin/python -I - "$STAGE" "$NAME" "$DIST/$NAME.tar.gz" <<'EOF'
+  "$PY" -I - "$STAGE" "$NAME" "$DIST/$NAME.tar.gz" <<'EOF'
 import sys, tarfile, os
 stage, name, out = sys.argv[1:]
 def norm(t):
@@ -79,7 +86,7 @@ if [ "$WANT_WIN" = 1 ]; then
   cp "$CARGO_TARGET_DIR/x86_64-pc-windows-gnu/release/towerfall-port.exe" "$D/"
   cp tools/windows/sdl2/x86_64-w64-mingw32/bin/SDL2.dll "$D/"
   common_files "$D" --target x86_64-pc-windows-gnu
-  tools/venv/bin/python -I - "$STAGE" "$NAME" "$DIST/$NAME.zip" <<'EOF'
+  "$PY" -I - "$STAGE" "$NAME" "$DIST/$NAME.zip" <<'EOF'
 import sys, zipfile, os
 stage, name, out = sys.argv[1:]
 root = os.path.join(stage, name)
@@ -97,7 +104,7 @@ EOF
 fi
 
 # Nothing from the game: only the files we put there.
-tools/venv/bin/python -I - "$DIST" "$VER" <<'EOF'
+"$PY" -I - "$DIST" "$VER" <<'EOF'
 import sys, tarfile, zipfile, os, re
 dist, ver = sys.argv[1:]
 allowed = {"README.md", "LICENSE-MIT", "LICENSE-APACHE", "THIRD-PARTY/SDL2-LICENSE.txt",

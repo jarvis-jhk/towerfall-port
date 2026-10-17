@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+  # Software Vulkan (lavapipe) for the renderer's pixel tests and the headless
+  # smoke test; the runners have no GPU.
+  WGPU_ADAPTER_NAME: llvmpipe
+
+# ubuntu-22.04 on purpose: the Linux binary needs the build host's glibc or
+# newer (2.35 covers Ubuntu 22.04+, Debian 12, SteamOS 3).
+jobs:
+  fmt:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: rustfmt
+          cache-key: fmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System packages
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsdl2-dev
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: clippy
+          cache-key: clippy
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsdl2-dev mesa-vulkan-drivers libvulkan1
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: test
+      # The repository holds no game data: tests that need a TowerFall
+      # install return early when none is found, so this runs everything
+      # that does not need the game.
+      - run: cargo test --workspace --locked
+
+  linux:
+    name: package (linux)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsdl2-dev mesa-vulkan-drivers libvulkan1 binutils
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: release-linux
+      # SDL2's licence for THIRD-PARTY/ comes from the SDL2 mingw release.
+      - uses: actions/cache@v4
+        with:
+          path: tools/windows/downloads
+          key: windows-toolchain-${{ hashFiles('scripts/fetch-windows-toolchain.sh') }}
+      - run: scripts/package.sh --linux-only
+      - run: scripts/ci/smoke-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: towerfall-port-linux
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  windows:
+    name: package (windows, cross-compiled)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          targets: x86_64-pc-windows-gnu
+          cache-key: release-windows
+      # llvm-mingw + SDL2 mingw release, SHA-256 pinned in the script.
+      - uses: actions/cache@v4
+        with:
+          path: tools/windows/downloads
+          key: windows-toolchain-${{ hashFiles('scripts/fetch-windows-toolchain.sh') }}
+      - run: scripts/fetch-windows-toolchain.sh
+      - name: Cross-build and package the zip
+        run: scripts/package.sh --windows-only
+      - name: Sanity-check the executable
+        run: |
+          zip=$(ls dist/towerfall-port-*-windows-x86_64.zip)
+          mkdir -p scratch
+          unzip -q "$zip" -d scratch/win
+          exe=$(ls scratch/win/towerfall-port-*/towerfall-port.exe)
+          file "$exe" | grep -q 'PE32+ executable.*x86-64'
+          # Only system DLLs and SDL2.dll may be imported.
+          tools/windows/llvm-mingw/bin/llvm-readobj --coff-imports "$exe" \
+            | sed -n 's/^ *Name: \(.*\.dll\)$/\1/Ip' | sort -u
+      - uses: actions/upload-artifact@v4
+        with:
+          name: towerfall-port-windows
+          path: dist/*.zip
+          if-no-files-found: error

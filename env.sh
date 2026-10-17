@@ -17,3 +17,6 @@ export TF8_GAME_DIR="${TF8_GAME_DIR:-$HOME/Gaming/TowerFall}"
 # Dev: the port's user data dir (import cache, settings, Warpzone identity) stays in the project.
 export TFP_DATA_DIR="$R/cache/userdata"
 export WARPZONE_HOME="$R/cache/warpzone-home"
+# Temporary files stay in the project too (and /tmp may be noexec, which
+# breaks rustdoc's doctest binaries).
+mkdir -p "$R/scratch/tmp" && export TMPDIR="$R/scratch/tmp"

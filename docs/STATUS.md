@@ -72,6 +72,14 @@ Living plan. Update when a step finishes.
       with SDL2, Windows zip; allowlist check), Warpzone descriptor, README.
       Published 2026-10-17: github.com/jarvis-jhk/towerfall-port (v0.1.0
       prerelease) and on Warpzone.
+- [ ] M14 Under JARVIS (handoff 2026-10-18): priorities in `ROADMAP.md`.
+      Done: CI (`.github/workflows/ci.yml`: fmt, clippy, tests without game
+      data, Linux tarball + headless smoke `scripts/ci/smoke-linux.sh`,
+      Windows cross-build; ubuntu-22.04 = glibc 2.35) and `release.yml`
+      (`v*` tag → prerelease with both archives and SHA256SUMS). `env.sh`
+      sets `TMPDIR=scratch/tmp` (doctests fail silently on a noexec /tmp,
+      as in the JARVIS worker). Next: Warpzone end to
+      end, Steam Deck defaults, desktop check, crash reports.
 
 ## Final verification (2026-10-17, this tree)
 

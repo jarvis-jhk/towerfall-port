@@ -1,0 +1,87 @@
+name: Release
+
+# Push a tag v<version> (version = [workspace.package] version in Cargo.toml):
+# builds the Linux tarball and the Windows zip, writes SHA256SUMS and creates
+# the GitHub release the Warpzone launcher installs from
+# (packaging/warpzone/towerfall-port.toml). Tag a commit that passed CI.
+# Every release is a prerelease until the project says otherwise (the
+# descriptor installs prereleases).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must match the crate version
+        run: |
+          v=$(sed -n '/^\[workspace\.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml | head -1)
+          [ "${GITHUB_REF_NAME}" = "v$v" ] || { echo "tag ${GITHUB_REF_NAME} != v$v (Cargo.toml)"; exit 1; }
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsdl2-dev mesa-vulkan-drivers libvulkan1 binutils
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: release-linux
+      - uses: actions/cache@v4
+        with:
+          path: tools/windows/downloads
+          key: windows-toolchain-${{ hashFiles('scripts/fetch-windows-toolchain.sh') }}
+      - run: scripts/package.sh --linux-only
+      - env:
+          WGPU_ADAPTER_NAME: llvmpipe
+        run: scripts/ci/smoke-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: towerfall-port-linux
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  windows:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          targets: x86_64-pc-windows-gnu
+          cache-key: release-windows
+      - uses: actions/cache@v4
+        with:
+          path: tools/windows/downloads
+          key: windows-toolchain-${{ hashFiles('scripts/fetch-windows-toolchain.sh') }}
+      - run: scripts/fetch-windows-toolchain.sh
+      - run: scripts/package.sh --windows-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: towerfall-port-windows
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [linux, windows]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: SHA256SUMS over both archives
+        run: |
+          cd dist
+          sha256sum towerfall-port-*.tar.gz towerfall-port-*.zip > SHA256SUMS
+          cat SHA256SUMS
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/towerfall-port-*.tar.gz dist/towerfall-port-*.zip dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --title "towerfall-port ${GITHUB_REF_NAME#v}" --generate-notes --prerelease
