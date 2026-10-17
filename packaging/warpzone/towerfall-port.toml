@@ -1,0 +1,70 @@
+# towerfall-port — a clean-room Rust reimplementation of TowerFall Ascension
+# (Matt Makes Games, 2013) with Dark World.
+# Tier 2: the game links warpzone-core directly (crates/net): host screen,
+# room browser, codes, invite links, --warpzone-join/--warpzone-host, rollback
+# netcode (GGRS) over Warpzone's encrypted peer channels, any mix of local and
+# online players up to 12. Validate with
+#   scripts/net/dev-server.sh --check     (warpzone-server check-games packaging/warpzone)
+id = "towerfall-port"
+name = "TowerFall (towerfall-port)"
+tagline = "The archery party brawler, rebuilt: up to 12 archers on one screen or online, with rollback."
+description = """
+An open-source, clean-room reimplementation of TowerFall Ascension and Dark World for Linux and Windows. Every sprite, sound, tower and song is loaded from your own copy of the game; nothing of the original is included or downloaded.
+
+Up to twelve archers in any mix: twelve controllers on one screen, twelve machines online, or several couches against each other. Versus, Team Deathmatch with any split, Headhunters and Last Man Standing, with the original towers, arrows and variants.
+
+Online: Versus for up to twelve archers on any mix of machines, the 8-player build's wide towers when everyone has it, co-op Quest and Dark World, Trials with spectators.
+
+Warpzone brings public and private rooms, join codes, invite links and NAT traversal; online play uses rollback netcode, so remote archers feel as responsive as the one next to you on the couch."""
+homepage = "https://github.com/jarvis-jhk/towerfall-port"
+accent = "#d9a441"
+motif = "ruins"
+tier = 2
+local_players = 12
+third_party = false
+status = "in development"
+requires = "your own copy of TowerFall Ascension (Steam; Dark World optional) — towerfall-port reads its data at start"
+
+[install]
+github = "jarvis-jhk/towerfall-port"
+prerelease = true
+checksums = "SHA256SUMS"
+assets = { linux = "towerfall-port-*-linux-x86_64.tar.gz", deck = "towerfall-port-*-linux-x86_64.tar.gz", windows = "towerfall-port-*-windows-x86_64.zip" }
+
+[launch]
+exec = { linux = "towerfall-port-*/towerfall-port", deck = "towerfall-port-*/towerfall-port", windows = "towerfall-port-*/towerfall-port.exe" }
+join = ["--warpzone-join", "{room}"]
+host = ["--warpzone-host"]
+
+[rooms]
+# Members (machines). Player slots are counted by the game: at most 12 in
+# total, any number of them local to one machine; machines without players
+# can spectate.
+max_players = 12
+presets = [
+  { id = "versus", label = "versus" },
+  { id = "teams", label = "team deathmatch" },
+  { id = "headhunters", label = "headhunters" },
+  { id = "lms", label = "last man standing" },
+  { id = "quest", label = "quest (co-op)" },
+  { id = "darkworld", label = "dark world (co-op)" },
+  { id = "trials", label = "trials" },
+]
+display = [
+  { key = "players", label = "Archers" },
+  { key = "mode", label = "Mode" },
+  { key = "map", label = "Tower" },
+]
+
+# The launcher hands the install it finds over as WARPZONE_DATA_TOWERFALL;
+# the game reads its data from there (it also finds Steam installs itself, or
+# TF_GAME_DIR). The install is only read, never modified.
+[[data]]
+id = "towerfall"
+label = "TowerFall Ascension (Steam)"
+description = "An installed copy of TowerFall Ascension: the folder with TowerFall.exe and Content. Dark World (DarkWorldContent) is used when present. towerfall-port reads it at start; the install is never modified."
+files = ["./TowerFall.exe", "Content/Atlas/atlas.xml"]
+steam = ["TowerFall"]
+downloads = false
+discs = false
+buy = [{ label = "Steam", url = "https://store.steampowered.com/app/251470/TowerFall_Ascension/" }]

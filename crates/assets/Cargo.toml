@@ -1,0 +1,20 @@
+[package]
+name = "tfp-assets"
+description = "Readers for the original game's data (atlases, sprite data, levels, audio, fonts)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+roxmltree.workspace = true
+png.workspace = true
+thiserror.workspace = true
+log.workspace = true
+
+[[bin]]
+name = "tower-sheet"
+path = "src/bin/tower_sheet.rs"
+
+[[bin]]
+name = "assets-info"
+path = "src/bin/assets_info.rs"

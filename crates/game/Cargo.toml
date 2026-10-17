@@ -1,0 +1,25 @@
+[package]
+name = "towerfall-port"
+description = "towerfall-port game binary: SDL2 platform layer, menus, app flow"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "towerfall-port"
+path = "src/main.rs"
+
+[dependencies]
+tfp-render.workspace = true
+tfp-assets.workspace = true
+tfp-sim.workspace = true
+# Online play (src/online).
+tfp-net.workspace = true
+serde.workspace = true
+bincode.workspace = true
+sdl2.workspace = true
+raw-window-handle.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+log.workspace = true
+pollster.workspace = true

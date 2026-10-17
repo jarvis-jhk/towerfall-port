@@ -1,0 +1,15 @@
+[package]
+name = "tfp-render"
+description = "wgpu pixel-art renderer: sprite batches into a low-res game target, scaled presentation, lighting hook, offscreen capture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wgpu.workspace = true
+bytemuck.workspace = true
+png.workspace = true
+pollster.workspace = true
+glam.workspace = true
+log.workspace = true
+thiserror.workspace = true
