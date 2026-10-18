@@ -68,7 +68,7 @@ jobs:
       - name: System packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libsdl2-dev mesa-vulkan-drivers libvulkan1 binutils
+          sudo apt-get install -y --no-install-recommends libsdl2-dev mesa-vulkan-drivers libvulkan1 binutils libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxinerama-dev libxfixes-dev libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgl-dev libgles-dev libdrm-dev libgbm-dev libpulse-dev libasound2-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev libibus-1.0-dev
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: release-linux
@@ -77,6 +77,13 @@ jobs:
         with:
           path: tools/windows/downloads
           key: windows-toolchain-${{ hashFiles('scripts/fetch-windows-toolchain.sh') }}
+      # A current SDL2 for the tarball (the runner's 2.0.20 is too old).
+      - uses: actions/cache@v4
+        with:
+          path: tools/sdl2-linux
+          key: sdl2-linux-${{ hashFiles('scripts/ci/build-sdl2-linux.sh') }}
+      - run: scripts/ci/build-sdl2-linux.sh
+      - run: echo "TFP_SDL2_LIB_DIR=$PWD/tools/sdl2-linux/lib" >> "$GITHUB_ENV"
       - run: scripts/package.sh --linux-only
       - run: scripts/ci/smoke-linux.sh
       - uses: actions/upload-artifact@v4

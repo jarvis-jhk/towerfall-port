@@ -57,7 +57,13 @@ if [ "$WANT_LINUX" = 1 ]; then
   BIN="$CARGO_TARGET_DIR/release/towerfall-port"
   mkdir -p "$D/lib"
   cp "$BIN" "$D/"
-  SDL=$(ldd "$BIN" | awk '/libSDL2-2.0.so.0/ {print $3}')
+  # The SDL2 the binary was linked against: TFP_SDL2_LIB_DIR (CI builds a
+  # current one, scripts/ci/build-sdl2-linux.sh), else the one ldd finds.
+  if [ -n "${TFP_SDL2_LIB_DIR:-}" ] && [ -e "$TFP_SDL2_LIB_DIR/libSDL2-2.0.so.0" ]; then
+    SDL=$TFP_SDL2_LIB_DIR/libSDL2-2.0.so.0
+  else
+    SDL=$(ldd "$BIN" | awk '/libSDL2-2.0.so.0/ {print $3}')
+  fi
   [ -n "$SDL" ] || { echo "libSDL2 not found by ldd" >&2; exit 1; }
   cp -L "$SDL" "$D/lib/libSDL2-2.0.so.0"
   readelf -d "$D/towerfall-port" | grep -q 'RUNPATH.*\$ORIGIN/lib' \
