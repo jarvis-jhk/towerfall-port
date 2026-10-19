@@ -82,6 +82,8 @@ Living plan. Update when a step finishes.
       sets `TMPDIR=scratch/tmp` (doctests fail silently on a noexec /tmp,
       as in the JARVIS worker). Next: Warpzone end to
       end, Steam Deck defaults, desktop check, crash reports.
+      Community mods (ROADMAP): survey of the top 20 done (`docs/MODS.md`);
+      next slice is the `Mods` framework (off by default, in the match config).
 
 ## Final verification (2026-10-17, this tree)
 

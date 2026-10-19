@@ -166,6 +166,51 @@ modes, without changing their order.
   `scripts/dev/`, frame time at 12 bots on the largest size, rollback
   determinism tests with the size in the match settings.
 
+## Community mods
+
+The twenty most popular TowerFall mods, built in natively and each one
+optional (Jan, 2026-10-19). The survey that picked them, their authors and
+licences is [docs/MODS.md](docs/MODS.md). After the current priorities,
+macOS, the new modes and big arenas, without changing their order; small
+slices may go in earlier when they are cheap.
+
+- **Clean room**: rebuilt from each mod's public description and observable
+  behaviour, never from its code; none of their art, sounds or levels is
+  shipped (none of the licences allows it), and nothing from the game.
+  What a mod draws comes from the player's own game data or our own art.
+  Each mod gets a design note in `docs/mods/` (public, our own text) and
+  credits its original author there and in the in-game mod list.
+- **Off by default, one toggle each**: a `Mods` set (bit per mod, with the
+  mod's own options) in the sim's match settings, edited in a "Mods" page
+  of the versus settings and the co-op menus, remembered in
+  `options.cfg`. Presentation-only mods (colours, timers, menus) are app
+  options instead and never touch the sim.
+- **Vanilla stays vanilla**: with every mod off the simulation is
+  bit-identical to today (the empty set adds nothing to the state or the
+  checksum; the determinism tests stay green unchanged).
+- **Online**: the host's mod set and options are part of the match config
+  sent over Warpzone, so rollback peers always agree; a peer that cannot
+  show a mod (an archer pack it does not have) falls back to drawing the
+  base archer, never to different gameplay.
+- **Tests**: per mod, one test that the toggle changes behaviour and one
+  that off equals vanilla (same checksums as a run without the field).
+
+Slices, smallest first:
+
+1. Survey (done: `docs/MODS.md`).
+2. The `Mods` framework: settings field, menu page, wire format, the
+   vanilla-equality test harness.
+3. Variant packs: Bartizan's six variants, then Additional Variants in
+   groups of about six.
+4. Cosmetics and options: Colored Drill Arrows, Miasma Colors, Music
+   Restart, Speedrun Timer, Score Counter, MenuVariants, Fortfeit,
+   Autolock Modifier, Profiles.
+5. Modes: Respawn and Crawl (Bartizan), Baron, Boss Practice, TowerBall,
+   Infinity Gauntlet.
+6. Archers: Skeleton and Training Dummy from the player's own sprites;
+   archer packs the player installed (ArcherLoader layout).
+7. More Replay; Power (25 powers, in groups).
+
 ## Open questions
 
 - **9-12 player Last Man Standing**: the miasma starts at 25 s as in the
