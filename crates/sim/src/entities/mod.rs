@@ -764,6 +764,6 @@ pub fn moonglass_for_arrows(w: &mut World, arrow_updating: bool) {
 
 pub use explosion::spawn as explode;
 pub use surfaces::{
-    corpse_ground_friction, hot_coals_under, ice_under, in_mud, mud_splash_up, on_hot_coals,
-    player_fire_update, player_mud_tracking, start_fire,
+    corpse_ground_friction, hot_coals_under, ice_under, in_mud, mud_splash_down, mud_splash_up,
+    on_hot_coals, player_fire_update, player_mud_tracking, start_fire,
 };

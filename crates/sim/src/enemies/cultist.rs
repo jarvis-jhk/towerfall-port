@@ -108,6 +108,9 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
         (JUMP, _) => {
             e.speed = Vec2::new(1.6 * e.facing as f32, -2.0);
             set_state(w, c, id, e, IDLE);
+            if let Some(m) = mud(w, c, id) {
+                crate::entities::mud_splash_up(w, m, x);
+            }
             e.co.finish();
         }
         (ATTACK, 0) => {
@@ -242,10 +245,22 @@ pub fn collide_h(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
 }
 
 /// Floor or ceiling: stop, landing sound, squash.
-pub fn collide_v(w: &mut World, _c: &Content, id: EntityId, e: &mut Enemy) {
+pub fn collide_v(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
     e.speed.y = 0.0;
-    w.sound("en_cultLand", w.core(id).pos.x);
+    let x = w.core(id).pos.x;
+    w.sound("en_cultLand", x);
     e.scale = Vec2::new(1.4, 0.6);
+    if let Some(m) = mud(w, c, id) {
+        crate::entities::mud_splash_down(w, m, x);
+    }
+}
+
+/// The mud its hitbox overlaps, if any.
+fn mud(w: &World, c: &Content, id: EntityId) -> Option<EntityId> {
+    if w.tagged(Tag::Mud).is_empty() {
+        return None;
+    }
+    w.first(c, &w.placed(id), Tag::Mud, id)
 }
 
 pub fn arrow_seeking(

@@ -106,10 +106,12 @@ Living plan. Update when a step finishes.
       base class/perception/portal (§1, §2), slimes and bats (§4.1-4.2),
       ghosts and cultists (§4.3-4.4), birdman and skeletons (§4.5-4.6),
       skull, crystals, exploder, worm, techno mage (§4.8-4.12), King Reaper
-      (§4.13); tests in `crates/sim/tests/fidelity_*.rs`. The parallel
-      workers were cut off mid-run; the tree was finished and verified
-      (fmt, clippy, workspace tests) but the Reaper slice has no dedicated
-      new tests yet. v0.3.0 prerelease.
+      (§4.13); tests in `crates/sim/tests/fidelity_*.rs`. v0.3.0 prerelease.
+      Open: enemy laser arrows (crystal 7, skeleton 6) lack their starting
+      bounce count (`shoot_arrow`); squished bats release lodged arrows with
+      (0,-1); enemy debris/corpse props (skull, hat, crystal shard, staff)
+      not spawned; a few presentation-only effects (Reaper glow/flash,
+      cultist mud-run particles).
 
 ## Final verification (2026-10-17, this tree)
 

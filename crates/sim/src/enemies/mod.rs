@@ -949,7 +949,8 @@ fn arrow_hit(
             e.ty,
             EvilCrystal | BlueCrystal | BoltCrystal | PrismCrystal | TechnoMage
         );
-        arrow::enter_fall_mode(w, aid, a, true, false, sound && !had_shield);
+        // A skeleton's shield drops it with the sound (§4.6).
+        arrow::enter_fall_mode(w, aid, a, true, false, sound || had_shield);
     }
     true
 }

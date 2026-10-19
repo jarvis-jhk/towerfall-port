@@ -252,6 +252,17 @@ pub fn explode(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
     let owner = if e.alive() { -1 } else { e.killer };
     let at = w.core(id).pos;
     blast::explode(w, c, at, owner, e.ty == EnemyType::SuperBombBat);
+    // Lodged arrows fly off with the bat's speed.
+    let v = e.speed;
+    for slot in &mut e.lodged {
+        if let Some(aid) = slot.take()
+            && let Some(Kind::Arrow(ar)) = w.kind_mut(aid)
+        {
+            ar.buried_in = None;
+            ar.state = arrow::ArrowState::Falling;
+            ar.speed = v;
+        }
+    }
     remove_now(w, id, e);
 }
 
