@@ -25,6 +25,35 @@ the work still ahead.
 5. **Crash reports**: panics reported to an issue automatically (opt-in, no
    personal data), so failures on players' machines are not lost.
 
+## macOS support
+
+After the current priorities, without changing their order.
+
+- **Build**: a macOS binary for Apple Silicon and Intel (one universal
+  binary via `lipo`, or two archives), built on a GitHub `macos` runner in
+  CI with a headless smoke run, and attached to every release.
+- **Player docs**: install and start notes for macOS, including where the
+  game data is found. Unsigned is fine; document the Gatekeeper workaround
+  (right-click > Open, or `xattr -dr com.apple.quarantine`).
+- **Known risks**:
+  - SDL2 must be bundled (as in the Linux tarball) or linked statically;
+    a `.app` bundle needs `@rpath`/`@executable_path` set up for it.
+  - Rendering: wgpu's Metal backend is already enabled but untested; check
+    Retina/HiDPI scaling of the pixel-perfect presentation, fullscreen
+    Spaces and vsync pacing (ProMotion displays).
+  - Controllers: SDL's macOS HIDAPI/GameController paths behave differently
+    (Xbox/PlayStation/Switch pads, hot-plug, mapping database), and 12 pads
+    at once is untested on macOS.
+  - File paths: the data dir falls back to `~/.local/share` today; macOS
+    wants `~/Library/Application Support/towerfall-port`. Game detection
+    must find the Mac Steam install (`~/Library/Application Support/Steam/
+    steamapps/common/TowerFall`, content inside `TowerFall.app/Contents/
+    Resources`) and the original's macOS save location.
+  - Warpzone: the launcher/client and its game descriptor need a macOS
+    build target; whether the Warpzone client runs on macOS at all is open.
+  - Audio and keyboard: Cmd-key shortcuts (Cmd+Q, Cmd+F) and the audio
+    device switching on macOS.
+
 ## Open questions
 
 - **9-12 player Last Man Standing**: the miasma starts at 25 s as in the
@@ -40,4 +69,3 @@ the work still ahead.
 - Workshop towers through Warpzone mods, if that needs no extra code.
 - Quest/Trials save data and unlock reveal cutscenes; co-op in the 8/12
   layouts.
-- macOS.
