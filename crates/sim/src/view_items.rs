@@ -19,6 +19,8 @@ use tfp_assets::atlas::AtlasKind;
 pub struct ItemArt {
     pub arrows: [Option<TexId>; 11],
     pub arrows_buried: [Option<TexId>; 11],
+    /// The normal arrow's fletching layer (tinted owner colour B).
+    pub arrow_feather: Option<TexId>,
     pub pickups: [Option<TexId>; 21],
     pub orb_sprites: [SpriteId; 5],
     pub chest: Option<TexId>,
@@ -31,6 +33,12 @@ pub struct ItemArt {
     pub shock: SpriteId,
     pub prism: SpriteId,
     pub mirror: SpriteId,
+    /// pickups.md §2.2b: the glow under every item, the orb border, the
+    /// animated trigger / prism arrow items.
+    pub pickup_glow: Option<TexId>,
+    pub orb_border: Option<TexId>,
+    pub trigger_pickup: SpriteId,
+    pub prism_pickup: SpriteId,
 }
 
 const ARROW_TEX: [&str; 11] = [
@@ -91,6 +99,7 @@ pub fn load_art(c: &mut Content, sprites: &tfp_assets::sprite_data::SpriteData) 
         art.arrows[i] = Some(c.tex(main, ARROW_TEX[i]));
         art.arrows_buried[i] = Some(c.tex(main, ARROW_BURIED_TEX[i]));
     }
+    art.arrow_feather = Some(c.tex(main, "arrows/arrowFeather"));
     for (i, n) in PICKUP_TEX.iter().enumerate() {
         art.pickups[i] = Some(c.tex(main, n));
     }
@@ -112,6 +121,10 @@ pub fn load_art(c: &mut Content, sprites: &tfp_assets::sprite_data::SpriteData) 
     art.shock = sprite(c, "Shock");
     art.prism = sprite(c, "Prism");
     art.mirror = sprite(c, "Mirror");
+    art.trigger_pickup = sprite(c, "TriggerArrowsPickup");
+    art.prism_pickup = sprite(c, "PrismArrowsPickup");
+    art.pickup_glow = Some(c.tex(main, "pickups/glow"));
+    art.orb_border = Some(c.tex(main, "pickups/orbBorder"));
     art.chest = Some(c.tex(main, "treasureChest"));
     art.big_chest = Some(c.tex(main, "bigChest"));
     art.bottomless_chest = Some(c.tex(main, "bottomlessChest"));
@@ -131,6 +144,8 @@ fn item(entity: EntityId, depth: i32, visual: Visual, pos: Vec2, origin: Vec2) -
         tint: [255; 4],
         depth,
         entity,
+        outline: 0,
+        clip_h: 1.0,
     }
 }
 
@@ -251,6 +266,7 @@ pub fn entity_items(out: &mut Vec<Drawable>, w: &World, c: &Content, id: EntityI
             };
             it.scale = Vec2::new(sc, sc);
             it.rotation = (1.0 - sc) * 40.0 * PI / 180.0;
+            it.outline = if art.brambles.is_some() { 255 } else { 0 };
             if b.burning {
                 it.tint = [255, 140, 60, 255];
             }
@@ -271,46 +287,7 @@ pub fn entity_items(out: &mut Vec<Drawable>, w: &World, c: &Content, id: EntityI
             if !core.flash.shown {
                 return true;
             }
-            let at = pos + p.draw_offset();
-            let k = p.kind as usize;
-            let orb = match p.kind {
-                Pickups::TimeOrb => Some(0),
-                Pickups::DarkOrb => Some(1),
-                Pickups::LavaOrb => Some(2),
-                Pickups::SpaceOrb => Some(3),
-                Pickups::ChaosOrb => Some(4),
-                _ => None,
-            };
-            let mut it = if let Some(o) =
-                orb.and_then(|o| sprite_item(c, art.orb_sprites[o], id, d, at, p.bob * 20.0))
-            {
-                o
-            } else if p.kind == Pickups::Mirror
-                && let Some(m) = sprite_item(c, art.mirror, id, d, at, p.bob * 20.0)
-            {
-                m
-            } else if let Some(t) = art.pickups[k] {
-                let grid = match p.kind {
-                    Pickups::Bomb => 12,
-                    k if k.is_arrows() && k != Pickups::Arrows => 12,
-                    Pickups::TimeOrb | Pickups::DarkOrb | Pickups::LavaOrb => 16,
-                    _ => 0,
-                };
-                let (v, o) = tex(c, t, if grid > 0 { 0 } else { -1 }, grid, grid);
-                item(id, d, v, at, o)
-            } else {
-                let col = match p.kind.arrow_type() {
-                    Some(t) => arrow_tint(t),
-                    None => [230, 230, 255, 255],
-                };
-                rect(id, d, at, 10.0, 10.0, col)
-            };
-            let s = p.scale();
-            it.scale = Vec2::new(s, s);
-            if p.kind == Pickups::Bomb {
-                it.rotation = (p.swell / crate::pickups::BOMB_SWELL).min(1.0) * 2.0 * PI;
-            }
-            out.push(it);
+            pickup_items(out, w, c, id, p);
         }
         Some(Kind::Chest(ch)) => {
             use crate::treasure::{ChestState, ChestType};
@@ -337,6 +314,12 @@ pub fn entity_items(out: &mut Vec<Drawable>, w: &World, c: &Content, id: EntityI
                     let h = cell as f32;
                     let mut it = item(id, d, v, at, Vec2::new(h / 2.0, h));
                     it.pos.y = core.bottom();
+                    // pickups.md §6.3: outlined until opened.
+                    it.outline = if ch.state != ChestState::Opened {
+                        255
+                    } else {
+                        0
+                    };
                     it
                 }
                 None => {
@@ -359,6 +342,188 @@ pub fn entity_items(out: &mut Vec<Drawable>, w: &World, c: &Content, id: EntityI
         _ => return false,
     }
     true
+}
+
+/// One item (pickups.md §2.2b): glow, outline, graphic(s).
+fn pickup_items(
+    out: &mut Vec<Drawable>,
+    w: &World,
+    c: &Content,
+    id: EntityId,
+    p: &crate::pickups::Pickup,
+) {
+    use crate::components::Ease;
+    let core = w.core(id);
+    let (pos, d) = (core.pos, core.depth);
+    let art = &c.common.items;
+    let at = pos + p.draw_offset();
+    // The unpack tween's eased value (glow alpha, item scale).
+    let g = Ease::BackOut.apply((p.t / crate::pickups::UNPACK).min(1.0));
+    // Frames since the item appeared (the bob counter wraps every 480).
+    let age = p.bob / (crate::math::TAU / 120.0);
+    let (sn, sn2) = (crate::math::sin(p.bob), crate::math::sin(p.bob / 2.0));
+    let breathe = Vec2::new(1.0 + 0.05 * sn2, 1.0 + 0.05 * sn);
+    // 1. Glow.
+    if let Some(t) = art.pickup_glow {
+        let bomb = p.kind == Pickups::Bomb;
+        let (v, o) = tex(c, t, -1, 0, 0);
+        let mut it = item(id, d, v, if bomb { pos } else { at }, o);
+        let a = if bomb { 0.5 } else { 0.3 } * g.clamp(0.0, 1.0);
+        it.tint = if bomb {
+            [255, 0, 0, (a * 255.0) as u8]
+        } else {
+            [0xFF, 0xEB, 0x2E, (a * 255.0) as u8]
+        };
+        out.push(it);
+    }
+    let strip = |k: usize, frame: i16| {
+        art.pickups[k].map(|t| {
+            let (v, o) = tex(c, t, frame, 12, 12);
+            item(id, d, v, at, o)
+        })
+    };
+    let whole = |k: usize| {
+        art.pickups[k].map(|t| {
+            let (v, o) = tex(c, t, -1, 0, 0);
+            item(id, d, v, at, o)
+        })
+    };
+    let orb = match p.kind {
+        Pickups::DarkOrb => Some(0usize),
+        Pickups::TimeOrb => Some(1),
+        Pickups::LavaOrb => Some(2),
+        Pickups::SpaceOrb => Some(3),
+        Pickups::ChaosOrb => Some(4),
+        _ => None,
+    };
+    let k = p.kind as usize;
+    let s = p.scale();
+    match p.kind {
+        Pickups::Shield => {
+            // The archer's bubble in the joined players' colours, the icon
+            // on top (only the icon is outlined).
+            if let Some(sd) = c.sprite(c.common.shield) {
+                let mut b = sprite_item(c, c.common.shield, id, d, at, age).expect("shield sprite");
+                b.pos = at;
+                b.origin = Vec2::new(sd.frame_w as f32 / 2.0, sd.frame_h as f32 / 2.0);
+                b.scale = if core.collidable {
+                    Vec2::new(0.6 + 0.1 * sn2, 0.6 + 0.1 * sn)
+                } else {
+                    Vec2::new(0.6 * g, 0.6 * g)
+                };
+                b.tint = shield_pickup_color(w, c, age);
+                out.push(b);
+            }
+            if let Some(mut it) = whole(k) {
+                it.scale = if core.collidable {
+                    breathe
+                } else {
+                    Vec2::new(g, g)
+                };
+                it.outline = 255;
+                out.push(it);
+            }
+            return;
+        }
+        _ if orb.is_some() => {
+            let o = orb.unwrap_or(0);
+            const BORDER: [u32; 4] = [0xF8B8F8, 0xFFFFFF, 0xF8B800, 0xFFFFFF];
+            let sc = if core.collidable {
+                breathe
+            } else {
+                Vec2::new(g, g)
+            };
+            let shown = (w.frame / 5).is_multiple_of(2);
+            if shown && let Some(t) = art.orb_border {
+                let (v, org) = tex(c, t, -1, 0, 0);
+                let mut it = item(id, d, v, at, org);
+                let ci = if o == 4 {
+                    (w.frame / 6) as usize % 4
+                } else {
+                    o
+                };
+                let col = BORDER[ci];
+                it.tint = [(col >> 16) as u8, (col >> 8) as u8, col as u8, 255];
+                it.scale = sc;
+                it.outline = 255;
+                out.push(it);
+            }
+            let sid = art.orb_sprites[[1, 0, 2, 3, 4][o]];
+            if let Some(mut it) = sprite_item(c, sid, id, d, at, age) {
+                it.scale = sc;
+                it.outline = if shown { 0 } else { 255 };
+                out.push(it);
+            }
+            return;
+        }
+        _ => {}
+    }
+    let mut it = match p.kind {
+        Pickups::BombArrows | Pickups::SuperBombArrows | Pickups::LaserArrows => {
+            strip(k, ((age / 18.0) as i16) % 2)
+        }
+        Pickups::BoltArrows => strip(k, ((age / 3.0) as i16) % 3),
+        Pickups::TriggerArrows => sprite_item(c, art.trigger_pickup, id, d, at, age),
+        Pickups::PrismArrows => sprite_item(c, art.prism_pickup, id, d, at, age),
+        Pickups::Mirror => sprite_item(c, art.mirror, id, d, at, age),
+        Pickups::Bomb => {
+            // Frames 0,0,2,1,1,2 every 3 ticks; the swell speeds it x1 -> x4
+            // (cubic in over 40 frames: +30 s^4 ticks of animation).
+            let sw = (p.swell / crate::pickups::BOMB_SWELL).min(1.0);
+            let t = age + 30.0 * sw * sw * sw * sw;
+            strip(k, [0, 0, 2, 1, 1, 2][(t / 3.0) as usize % 6])
+        }
+        _ => whole(k),
+    }
+    .unwrap_or_else(|| {
+        let col = match p.kind.arrow_type() {
+            Some(t) => arrow_tint(t),
+            None => [230, 230, 255, 255],
+        };
+        rect(id, d, at, 10.0, 10.0, col)
+    });
+    it.scale = Vec2::new(s, s);
+    // Breathing replaces the tween scale once collidable (10 frames in).
+    if core.collidable && matches!(p.kind, Pickups::Wings | Pickups::SpeedBoots) {
+        it.scale = breathe;
+    }
+    if p.kind == Pickups::Bomb {
+        it.rotation = (p.swell / crate::pickups::BOMB_SWELL).min(1.0) * 2.0 * PI;
+    }
+    it.outline = if matches!(it.visual, Visual::Sprite { .. }) {
+        255
+    } else {
+        0
+    };
+    out.push(it);
+}
+
+/// The shield item's bubble colour: every 12 frames the next joined slot
+/// among the first four (blue / red team colour B in team play), only with
+/// more than one player (pickups.md §2.2b).
+fn shield_pickup_color(w: &World, c: &Content, age: f32) -> [u8; 4] {
+    let team = w.versus.as_ref().is_some_and(|m| m.settings.team_mode());
+    let joined: Vec<usize> = (0..4)
+        .filter(|&i| crate::view::slot_archer(w, i).is_some())
+        .collect();
+    let all = (0..crate::world::MAX_PLAYERS)
+        .filter(|&i| crate::view::slot_archer(w, i).is_some())
+        .count();
+    let step = if all > 1 { (age / 12.0) as usize } else { 0 };
+    if team {
+        let t = if step % 2 == 0 {
+            crate::entity::Allegiance::Blue
+        } else {
+            crate::entity::Allegiance::Red
+        };
+        return crate::view::owner_color(w, c, 0, t, true);
+    }
+    match joined.get(step % joined.len().max(1)) {
+        Some(&i) => {
+            crate::view::owner_color(w, c, i as i8, crate::entity::Allegiance::Neutral, true)
+        }
+        None => [255; 4],
+    }
 }
 
 /// Extras drawn on top of entities the base view draws (thorns on a
@@ -392,6 +557,11 @@ pub fn decorate(out: &mut Vec<Drawable>, start: usize, w: &World, c: &Content, i
                 };
                 it.scale = Vec2::new(bs, bs);
                 it.rotation = k as f32 * PI / 3.0;
+                it.outline = if c.common.items.brambles.is_some() {
+                    255
+                } else {
+                    0
+                };
                 out.push(it);
             }
         }

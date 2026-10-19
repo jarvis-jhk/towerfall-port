@@ -30,6 +30,8 @@ impl Out<'_> {
             tint,
             depth: self.depth,
             entity: self.id,
+            outline: 0,
+            clip_h: 1.0,
         });
         self.v.last_mut().unwrap()
     }
@@ -200,6 +202,7 @@ pub fn items(v: &mut Vec<Drawable>, w: &World, c: &Content, id: EntityId, t: &To
         }
         Tower::ShiftBlock(s) => {
             let p = pos + s.jitter;
+            let from = o.v.len();
             o.nine(
                 art.tex("shiftBlock"),
                 p,
@@ -208,6 +211,14 @@ pub fn items(v: &mut Vec<Drawable>, w: &World, c: &Content, id: EntityId, t: &To
                 WHITE,
                 [110, 110, 120, 255],
             );
+            // Only the tiles are outlined, not the face.
+            for d in &mut o.v[from..] {
+                d.outline = if matches!(d.visual, Visual::Sprite { .. }) {
+                    255
+                } else {
+                    0
+                };
+            }
             let face = if hb.w > 20.0 && hb.h > 20.0 {
                 "shiftBlockFace"
             } else if hb.h <= 20.0 {
@@ -546,9 +557,9 @@ pub fn items(v: &mut Vec<Drawable>, w: &World, c: &Content, id: EntityId, t: &To
                     frame_t,
                     true,
                 );
-                o.sprite(s, f, pos, WHITE);
+                o.sprite(s, f, pos, WHITE).outline = 255;
             } else if let Some(t) = art.tex("orb") {
-                o.whole(t, pos, Vec2::new(6.0, 6.0), WHITE);
+                o.whole(t, pos, Vec2::new(6.0, 6.0), WHITE).outline = 255;
             } else {
                 o.push(
                     Visual::Rect { w: 12.0, h: 12.0 },

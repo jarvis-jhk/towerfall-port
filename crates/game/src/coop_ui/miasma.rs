@@ -26,6 +26,8 @@ fn item(visual: Visual, pos: Vec2, origin: Vec2, id: EntityId, depth: i32) -> Dr
         tint: [255; 4],
         depth,
         entity: id,
+        outline: 0,
+        clip_h: 1.0,
     }
 }
 

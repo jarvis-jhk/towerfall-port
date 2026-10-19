@@ -646,6 +646,12 @@ fn draw_actor(dl: &mut DrawList, g: &TowerGfx, c: &tfp_sim::Content, d: &tfp_sim
                     frame_h as i32,
                 );
             }
+            if d.clip_h < 1.0 {
+                src.h = (src.h as f32 * d.clip_h.max(0.0)) as i32;
+                if src.h <= 0 {
+                    return;
+                }
+            }
             dl.sprite(SubTexture::new(g.tex(tr.atlas), src), &params);
         }
         Visual::Rect { w, h } => {

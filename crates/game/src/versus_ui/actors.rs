@@ -21,6 +21,7 @@ use tfp_sim::content::{SpriteId, TexId};
 use tfp_sim::entity::{Allegiance, Kind};
 use tfp_sim::player::{HatState, PState};
 use tfp_sim::quiver::ArrowType;
+use tfp_sim::view::owner_color;
 use tfp_sim::{Content, Drawable, EntityId, View, Visual, World};
 
 use super::particles::Particles;
@@ -41,7 +42,6 @@ pub struct ArcherInfo {
     pub sleep_frame: i32,
     /// Frames between breaths (<= 0: none), offset, ducking offset.
     pub breath: (i32, G, G),
-    pub color_a: [u8; 4],
     pub color_b: [u8; 4],
     /// Team hat textures (Blue, Red) of the dropped hat.
     pub team_hat: [Option<TexId>; 2],
@@ -103,7 +103,6 @@ impl ArcherArt {
                     G::new(d.breathing.offset.0, d.breathing.offset.1),
                     G::new(d.breathing.ducking_offset.0, d.breathing.ducking_offset.1),
                 ),
-                color_a: d.color_a,
                 color_b: d.color_b,
                 team_hat: [
                     hat.and_then(|h| tex(c, &h.blue)),
@@ -732,12 +731,11 @@ impl ActorFx {
                             frame_h: ss.frame_h,
                         };
                         let sn = (t * 2.0 * PI / 120.0).sin();
-                        let gain = if st.shield_gain > 0 {
-                            ease_cube_out(st.shield_gain as f32 / 30.0)
-                        } else {
-                            1.0
-                        };
-                        it.scale = tfp_sim::Vec2::new(0.7 + 0.1 * sn, (0.7 - 0.1 * sn) * gain);
+                        // The gain reveals the bubble from the top (player.md §16.1).
+                        if st.shield_gain > 0 {
+                            it.clip_h = ease_cube_in_out(st.shield_gain as f32 / 30.0);
+                        }
+                        it.scale = tfp_sim::Vec2::new(0.7 + 0.1 * sn, 0.7 - 0.1 * sn);
                     }
                     out.push(it);
                 }
@@ -824,6 +822,8 @@ impl ActorFx {
                     tint: [255, 255, 255, (pf.alpha * 255.0) as u8],
                     depth: -490,
                     entity: id,
+                    outline: 0,
+                    clip_h: 1.0,
                 });
             }
         }
@@ -879,6 +879,12 @@ impl ActorFx {
             return;
         }
         let base = g(w.core(ent).pos) + anchor.unwrap_or(h.anchor);
+        // A living archer's hair is outlined with the body (player.md §19.1).
+        let outline = if w.player(ent).is_some_and(|p| p.invis_opacity >= 0.8) {
+            255
+        } else {
+            0
+        };
         let n = h.offsets.len();
         for i in 0..n {
             let Some(tex) = (if i + 1 == n {
@@ -916,6 +922,8 @@ impl ActorFx {
                 ],
                 depth,
                 entity: ent,
+                outline,
+                clip_h: 1.0,
             });
         }
     }
@@ -957,12 +965,12 @@ impl ActorFx {
                     0
                 };
                 it.visual = grid(tex, f, 15, 6);
-                it.origin = tfp_sim::Vec2::new(12.0, 3.0);
+                it.origin = tfp_sim::Vec2::new(13.0, 3.0);
             }
             ArrowType::SuperBomb => {
                 let f = if lit { ((t / 6.0) as i16) % 3 } else { 2 };
                 it.visual = grid(tex, f, 15, 6);
-                it.origin = tfp_sim::Vec2::new(12.0, 3.0);
+                it.origin = tfp_sim::Vec2::new(13.0, 3.0);
             }
             ArrowType::Bolt => {
                 let per = if buried { 2.4 } else { 1.8 };
@@ -1015,11 +1023,8 @@ impl ActorFx {
                 }
                 out.push(it);
                 // Eyeball (colour B toward white) and pupil (colour A).
-                let (ca, cb) = w
-                    .player_by_index(ar.player_index.max(0) as u8)
-                    .and_then(|id| w.player(id))
-                    .and_then(|p| self.art.infos.get(p.archer as usize))
-                    .map_or(([255; 4], [255; 4]), |i| (i.color_a, i.color_b));
+                let oc = |light| owner_color(w, c, ar.player_index, ar.team_color, light);
+                let (ca, cb) = (oc(false), oc(true));
                 let eyeball = [
                     (cb[0] as f32 + (255.0 - cb[0] as f32) * 0.75) as u8,
                     (cb[1] as f32 + (255.0 - cb[1] as f32) * 0.75) as u8,
@@ -1042,9 +1047,13 @@ impl ActorFx {
     }
 }
 
-fn ease_cube_out(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0) - 1.0;
-    t * t * t + 1.0
+fn ease_cube_in_out(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    if t <= 0.5 {
+        4.0 * t * t * t
+    } else {
+        1.0 - 4.0 * (1.0 - t) * (1.0 - t) * (1.0 - t)
+    }
 }
 
 /// Monocle's `BigBackOut` (overshoot 2.5).

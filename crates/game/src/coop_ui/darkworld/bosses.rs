@@ -259,6 +259,8 @@ impl Out<'_> {
             tint: [255; 4],
             depth: self.depth,
             entity: self.id,
+            outline: 0,
+            clip_h: 1.0,
         });
         self.items.last_mut().unwrap()
     }

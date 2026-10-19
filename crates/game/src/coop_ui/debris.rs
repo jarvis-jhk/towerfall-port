@@ -756,6 +756,8 @@ impl Debris {
                 tint,
                 depth: -60,
                 entity: id,
+                outline: 0,
+                clip_h: 1.0,
             });
         }
     }

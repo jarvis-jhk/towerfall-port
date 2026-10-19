@@ -115,6 +115,7 @@ pub fn prepare(
     if let Some(a) = &ui.actors {
         a.apply(&mut view, w, c, d.tick);
     }
+    tfp_sim::view::expand_outlines(&mut view.items);
     // Archers are among the sim's light sources (radius 50, `view.lights`).
     let base: Vec<(Vec2, f32)> = extra
         .iter()

@@ -10,7 +10,7 @@
 //! the list; renderers draw them from the level data.
 
 use crate::content::{Content, SpriteDef, TexId};
-use crate::entity::{EntityId, Kind};
+use crate::entity::{Allegiance, EntityId, Kind};
 use crate::math::{PI, Vec2};
 use crate::player::{HatState, PState, Player};
 use crate::world::World;
@@ -45,6 +45,12 @@ pub struct Drawable {
     pub depth: i32,
     /// The entity it belongs to (for debugging/picking).
     pub entity: EntityId,
+    /// Alpha of its 1-px black 8-neighbour outline (`DrawOutline`,
+    /// rendering.md 10.4), 0 = none; [`expand_outlines`] makes the copies.
+    pub outline: u8,
+    /// Fraction of the frame's rows drawn from the top (`SpritePart`
+    /// `DrawHeight`; the shield gain), 1 = all.
+    pub clip_h: f32,
 }
 
 /// Draw options.
@@ -105,6 +111,99 @@ fn tex_visual(t: TexId) -> Visual {
     }
 }
 
+/// Team colours A / B (rendering.md §12.1; teams 2-5 versus.md §15.4).
+fn team_colors(t: Allegiance) -> Option<([u8; 4], [u8; 4])> {
+    let (a, b) = match t {
+        Allegiance::Neutral => return None,
+        Allegiance::Blue => (0x3CBCFC, 0xA4E4FC),
+        Allegiance::Red => (0xAD4126, 0xFF6338),
+        Allegiance::Green => (0x00B800, 0x45E045),
+        Allegiance::Yellow => (0xF2FF00, 0xFFFF66),
+        Allegiance::Purple => (0x7A42FF, 0xA77FFF),
+        Allegiance::Orange => (0xEF8C21, 0xFFB15E),
+    };
+    let c = |v: u32| [(v >> 16) as u8, (v >> 8) as u8, v as u8, 255];
+    Some((c(a), c(b)))
+}
+
+/// Colour A or B (`light`) of whatever player slot `index` plays, as
+/// `ArcherData.GetColorA/B(playerIndex, team)`: the team's colours in team
+/// play, the enemy (red team) colours without a player (`index < 0`).
+pub fn owner_color(w: &World, c: &Content, index: i8, team: Allegiance, light: bool) -> [u8; 4] {
+    let pick = |(a, b): ([u8; 4], [u8; 4])| if light { b } else { a };
+    if index < 0 {
+        return pick(team_colors(Allegiance::Red).unwrap_or_default());
+    }
+    if let Some(tc) = team_colors(team) {
+        return pick(tc);
+    }
+    slot_archer(w, index as usize)
+        .and_then(|a| c.archers.get(a as usize))
+        .map_or(WHITE, |a| if light { a.color_b } else { a.color_a })
+}
+
+/// The archer (`Content::archers` index) player slot `i` plays
+/// (`TFGame.Characters`): the Versus slot, else the world setup, else the
+/// slot's archer or corpse on the field.
+pub fn slot_archer(w: &World, i: usize) -> Option<u16> {
+    if let Some(m) = &w.versus {
+        return m.settings.slots.get(i).copied().flatten().map(|s| s.archer);
+    }
+    if let Some(ps) = w.setup.players.get(i).copied().flatten() {
+        return Some(ps.archer);
+    }
+    w.entities().find_map(|id| match w.kind(id) {
+        Some(Kind::Player(p)) if p.index as usize == i => Some(p.archer),
+        Some(Kind::Corpse(cp)) if cp.player_index as usize == i => Some(cp.archer),
+        _ => None,
+    })
+}
+
+/// The eight `(dx, dy)` neighbours of `DrawOutline`, in its order.
+const OUTLINE: [(f32, f32); 8] = [
+    (-1.0, -1.0),
+    (-1.0, 0.0),
+    (-1.0, 1.0),
+    (0.0, -1.0),
+    (0.0, 1.0),
+    (1.0, -1.0),
+    (1.0, 0.0),
+    (1.0, 1.0),
+];
+
+/// Turns `outline` flags into black copies (rendering.md 10.4): each run
+/// of one entity's drawables is preceded by the eight one-pixel-offset
+/// black copies of its flagged members, so all of an entity's outlines go
+/// under all of its layers (an archer's bow outline does not cross its
+/// body). Run once on the final list, after the game's cosmetics.
+pub fn expand_outlines(items: &mut Vec<Drawable>) {
+    if items.iter().all(|d| d.outline == 0) {
+        return;
+    }
+    let src = std::mem::take(items);
+    items.reserve(src.len() * 2);
+    let mut i = 0;
+    while i < src.len() {
+        let e = src[i].entity;
+        let mut j = i + 1;
+        while j < src.len() && src[j].entity == e {
+            j += 1;
+        }
+        let run = &src[i..j];
+        for (dx, dy) in OUTLINE {
+            for d in run.iter().filter(|d| d.outline > 0) {
+                let mut o = *d;
+                o.pos += Vec2::new(dx, dy);
+                o.tint = [0, 0, 0, d.outline];
+                o.outline = 0;
+                items.push(o);
+            }
+        }
+        items.extend(run.iter().map(|d| Drawable { outline: 0, ..*d }));
+        i = j;
+    }
+}
+
 impl View {
     pub fn build(w: &World, c: &Content, opt: ViewOptions) -> View {
         let ws = w.world_size(c);
@@ -143,14 +242,29 @@ impl View {
                     if !core.flash.shown {
                         // decaying arrows blink
                     } else if let Some(t) = tex {
-                        v.items.push(item(
+                        // arrows.md §14c: owner-coloured layers, all outlined.
+                        use crate::quiver::ArrowType as A;
+                        let b = owner_color(w, c, a.player_index, a.team_color, true);
+                        let mut d = item(
                             id,
                             core.depth,
                             tex_visual(t),
                             core.pos,
                             Vec2::new(11.0, 3.0),
                             a.direction,
-                        ));
+                        );
+                        d.outline = 255;
+                        if matches!(a.arrow_type, A::Feather | A::Bolt | A::Laser) {
+                            d.tint = b;
+                        }
+                        v.items.push(d);
+                        if a.arrow_type == A::Normal
+                            && let Some(f) = c.common.items.arrow_feather
+                        {
+                            d.visual = tex_visual(f);
+                            d.tint = b;
+                            v.items.push(d);
+                        }
                     } else {
                         let mut d = item(
                             id,
@@ -386,6 +500,8 @@ fn item(
         tint: WHITE,
         depth,
         entity,
+        outline: 0,
+        clip_h: 1.0,
     }
 }
 
@@ -460,6 +576,7 @@ fn player_items(out: &mut Vec<Drawable>, w: &World, c: &Content, id: EntityId, p
         return;
     };
     let body_frame = p.body.frame.max(0) as usize;
+    let first = out.len();
     // Aimer.
     if p.aiming
         && !p.arrows.is_empty()
@@ -569,13 +686,19 @@ fn player_items(out: &mut Vec<Drawable>, w: &World, c: &Content, id: EntityId, p
         d.tint = tint;
         out.push(d);
     }
-    // Shield.
+    // Outline of every layer so far (player.md §19.1), not the shield.
+    if p.invis_opacity >= 0.8 {
+        for d in &mut out[first..] {
+            d.outline = 255;
+        }
+    }
+    // Shield (player.md §16.1): owner colour B, team colour in teams.
     if p.has_shield
         && let Some(sh) = c.sprite(c.common.shield)
     {
         let mut d = item(id, core.depth, sprite_visual(sh, 0), pos, sh.origin, 0.0);
         d.scale = Vec2::new(0.8, 0.6);
-        d.tint = [a.color_b[0], a.color_b[1], a.color_b[2], 255];
+        d.tint = team_colors(p.team_color).map_or(a.color_b, |t| t.1);
         out.push(d);
     }
 }
@@ -630,4 +753,54 @@ fn lights(w: &World) -> Vec<(Vec2, f32)> {
             (r > 0.0).then(|| (w.core(id).pos, r))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn d(entity: u32, outline: u8, x: f32) -> Drawable {
+        let mut d = item(
+            EntityId {
+                index: entity,
+                generation: 0,
+            },
+            0,
+            Visual::Rect { w: 1.0, h: 1.0 },
+            Vec2::new(x, 0.0),
+            Vec2::ZERO,
+            0.0,
+        );
+        d.outline = outline;
+        d
+    }
+
+    #[test]
+    fn outlines_go_under_all_layers_of_their_entity() {
+        // Entity 1: body (outlined), bow (outlined), shield (not); entity 2: plain.
+        let mut v = vec![d(1, 255, 0.0), d(1, 255, 5.0), d(1, 0, 9.0), d(2, 0, 20.0)];
+        expand_outlines(&mut v);
+        assert_eq!(v.len(), 16 + 4);
+        // Sixteen black copies first, then the three layers in order.
+        assert!(
+            v[..16]
+                .iter()
+                .all(|o| o.tint == [0, 0, 0, 255] && o.outline == 0)
+        );
+        assert_eq!(v[0].pos, Vec2::new(-1.0, -1.0));
+        assert_eq!(v[1].pos, Vec2::new(4.0, -1.0));
+        assert_eq!(
+            v[16..19].iter().map(|o| o.pos.x).collect::<Vec<_>>(),
+            [0.0, 5.0, 9.0]
+        );
+        assert!(v[16..].iter().all(|o| o.tint == WHITE && o.outline == 0));
+    }
+
+    #[test]
+    fn outline_alpha_carries_over() {
+        let mut v = vec![d(3, 128, 0.0)];
+        expand_outlines(&mut v);
+        assert_eq!(v.len(), 9);
+        assert_eq!(v[0].tint, [0, 0, 0, 128]);
+    }
 }

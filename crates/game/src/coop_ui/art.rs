@@ -308,6 +308,8 @@ impl B<'_> {
             tint: [255; 4],
             depth: self.depth,
             entity: self.id,
+            outline: 0,
+            clip_h: 1.0,
         });
         self.out.last_mut()
     }
@@ -336,6 +338,8 @@ impl B<'_> {
             tint: [255; 4],
             depth: self.depth,
             entity: self.id,
+            outline: 0,
+            clip_h: 1.0,
         });
         self.out.last_mut()
     }
@@ -375,7 +379,14 @@ pub fn apply(view: &mut View, w: &World, cx: &Ctx, anims: &mut Anims) -> Vec<(Ve
             Some(Kind::Enemy(e)) => {
                 replaced.insert(id);
                 if core.visible {
+                    let from = b.out.len();
                     enemy(&mut b, w, cx, anims, id, e);
+                    let a = enemy_outline(e);
+                    if a > 0 {
+                        for d in &mut b.out[from..] {
+                            d.outline = a;
+                        }
+                    }
                     if e.alive() {
                         lights.push((core.pos, light_radius(e.ty)));
                     }
@@ -578,6 +589,30 @@ fn facing_scale(e: &Enemy) -> Vec2 {
 
 /// Picks an enemy's look (enemies.md section 4, the sprite data's
 /// animation names) from its state and speed.
+/// Alpha of the black outline an enemy's sprite gets (`DrawOutline` in
+/// the originals' render): slimes, cultists and crystals while alive,
+/// exploders and techno mages always, flaming skulls until dead, ghosts
+/// and elementals fading with their alpha above 1. Skeletons outline their
+/// body parts themselves (not their arrow HUD).
+fn enemy_outline(e: &Enemy) -> u8 {
+    use EnemyType::*;
+    let a = match e.ty {
+        Slime | RedSlime | BlueSlime | Cultist | ScytheCultist | BossCultist | EvilCrystal
+        | BlueCrystal | BoltCrystal | PrismCrystal
+            if e.alive() =>
+        {
+            1.0
+        }
+        Exploder | TechnoMage => 1.0,
+        FlamingSkull if e.state != enemies::skull::DEAD => 1.0,
+        Ghost | GreenGhost | Elemental | GreenElemental if e.alive() && e.alpha > 1.0 => {
+            (e.alpha - 1.0) * 5.0
+        }
+        _ => 0.0,
+    };
+    (a.clamp(0.0, 1.0) * 255.0) as u8
+}
+
 fn enemy(b: &mut B, w: &World, cx: &Ctx, anims: &mut Anims, id: EntityId, e: &Enemy) {
     use EnemyType::*;
     use enemies::*;
@@ -874,6 +909,7 @@ fn skeleton(
     use enemies::skeleton as sk;
     let pos = w.core(id).pos;
     let f = e.facing as f32;
+    let from = b.out.len();
     // Mimics copy the look of the player they mimicked; jesters are Cyan.
     if sk::mimicked(e)
         && let Some(t) = e.target
@@ -964,6 +1000,8 @@ fn skeleton(
         tint,
         depth: b.depth,
         entity: id,
+        outline: 0,
+        clip_h: 1.0,
     });
     // Head.
     if e.state != sk::DODGE
@@ -994,6 +1032,8 @@ fn skeleton(
             tint,
             depth: b.depth,
             entity: id,
+            outline: 0,
+            clip_h: 1.0,
         });
     }
     // Bow: aimed while shooting, else at the facing direction.
@@ -1031,7 +1071,13 @@ fn skeleton(
             tint,
             depth: b.depth,
             entity: id,
+            outline: 0,
+            clip_h: 1.0,
         });
+    }
+    // Wings, body, head and bow are outlined (`HumanoidEnemyRenderer`).
+    for d in &mut b.out[from..] {
+        d.outline = 255;
     }
     // Arrow HUD (enemies.md 1.9): held arrows centred at (0,-22), 4 px apart
     // (the first one is the next to be shot; specials go first).

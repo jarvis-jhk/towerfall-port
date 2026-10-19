@@ -84,6 +84,15 @@ Living plan. Update when a step finishes.
       end, Steam Deck defaults, desktop check, crash reports.
       Community mods (ROADMAP): survey of the top 20 done (`docs/MODS.md`);
       next slice is the `Mods` framework (off by default, in the match config).
+      Visual fidelity pass (2026-10-19, owner's report): black 8-neighbour
+      outlines (`Drawable::outline`, `view::expand_outlines` in
+      `match_draw::prepare`) on archers (+hair), arrows, pickups, chests,
+      brambles, shift blocks, world orbs, Quest enemies; the normal arrow's
+      owner-coloured fletching layer, feather/bolt/laser arrows tinted owner
+      colour B; pickup glow, idle breathing, strip animations, the shield
+      item's colour-cycling bubble and the orb border; shield gain reveals
+      from the top (`Drawable::clip_h`); team colour on archer shields.
+      Specs: arrows.md §14c, pickups.md §2.2b and §6.3, player.md §16.1.
 
 ## Final verification (2026-10-17, this tree)
 
