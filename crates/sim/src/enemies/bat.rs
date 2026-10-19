@@ -48,18 +48,20 @@ pub fn update(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> u8 {
             if solid_at(w, c, id, Vec2::new(e.facing as f32, 0.0)) {
                 e.facing = -e.facing;
             }
-            e.t[COOLDOWN] -= tm;
             IDLE
         }
         SWOOP => {
             approach_speed(e, e.target_speed, 0.5 * tm);
-            set_facing(e, e.speed.x);
             SWOOP
         }
         _ => {
-            e.speed.y = min(e.speed.y + 0.225 * tm, 2.7);
-            let f = if on_ground(w, c, id) { 0.2 } else { 0.1 };
-            e.speed.x = approach(e.speed.x, 0.0, f * tm);
+            // On the ground: friction only, no gravity.
+            if on_ground(w, c, id) {
+                e.speed.x = approach(e.speed.x, 0.0, 0.2 * tm);
+            } else {
+                e.speed.x = approach(e.speed.x, 0.0, 0.1 * tm);
+                e.speed.y = min(e.speed.y + 0.225 * tm, 2.7);
+            }
             DEAD
         }
     }
@@ -90,11 +92,9 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
                 .and_then(|t| w.try_core(t))
                 .map(|t| t.pos)
                 .unwrap_or(me);
+            set_facing(e, shortest(w, c, me, tp).x);
             let v = shortest_open(w, c, me, tp).1;
-            set_facing(e, v.x);
-            let windup = -v.safe_normalize();
-            e.target_pos = windup;
-            e.target_speed = windup * 0.3;
+            e.target_speed = v.safe_normalize_len(-0.3);
             if crow(e) && e.n[PASS] == 0 {
                 w.sound("en_crowPreDive", me.x);
             }
@@ -115,11 +115,13 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
                 .and_then(|t| w.try_core(t))
                 .map(|t| t.pos)
                 .unwrap_or(me);
-            let v = shortest_open(w, c, me, tp).1;
-            e.target_speed = if v.length() < 80.0 {
-                v.safe_normalize() * 2.2
+            // Toward the target if openly near, else the reverse of the
+            // (possibly wall-clipped) wind-up target.
+            let (open, v) = shortest_open(w, c, me, tp);
+            e.target_speed = if open && v.length_sq() < 6400.0 {
+                v.safe_normalize_len(2.2)
             } else {
-                -e.target_pos * 2.2
+                e.target_speed.safe_normalize_len(-2.2)
             };
             e.co.yield_frames(20.0, 2);
         }
@@ -164,28 +166,38 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
     }
 }
 
+/// Wall hits squash the sprite; a swooping bat loses that axis of both its
+/// speed and its swoop target, a dead one bounces (enemies.md §4.2).
 pub fn collide_h(_w: &mut World, _c: &Content, _id: EntityId, e: &mut Enemy) {
+    e.speed.x = 0.0;
+    e.scale = Vec2::new(0.6, 1.2);
     match e.state {
-        SWOOP => {
-            e.speed = Vec2::ZERO;
-            e.target_speed = Vec2::ZERO;
-        }
+        SWOOP => e.target_speed.x = 0.0,
         DEAD => e.speed.x *= -0.5,
-        _ => e.speed.x = 0.0,
+        _ => {}
     }
 }
 
 pub fn collide_v(_w: &mut World, _c: &Content, _id: EntityId, e: &mut Enemy) {
+    let vy = e.speed.y;
+    e.speed.y = 0.0;
+    e.scale = Vec2::new(1.2, 0.6);
     match e.state {
-        SWOOP => {
-            e.speed = Vec2::ZERO;
-            e.target_speed = Vec2::ZERO;
-        }
-        DEAD => {
-            e.speed.y = if e.speed.y >= 0.5 { -0.5 } else { 0.0 };
-        }
-        _ => e.speed.y = 0.0,
+        SWOOP => e.target_speed.y = 0.0,
+        DEAD if vy >= 0.5 => e.speed.y = -0.5,
+        _ => {}
     }
+}
+
+/// End of the tick, after the state switch: the swoop cooldown and the
+/// sprite scale relax.
+pub fn post_update(w: &mut World, _c: &Content, _id: EntityId, e: &mut Enemy) {
+    let tm = w.time.time_mult;
+    if e.state != SWOOP && e.t[COOLDOWN] > 0.0 {
+        e.t[COOLDOWN] -= tm;
+    }
+    e.scale.x = approach(e.scale.x, 1.0, 0.04 * tm);
+    e.scale.y = approach(e.scale.y, 1.0, 0.04 * tm);
 }
 
 pub fn touch(
@@ -196,10 +208,10 @@ pub fn touch(
     pid: EntityId,
     p: &mut Player,
 ) {
-    if bomb(e) {
+    // Only the normal bomb bat goes off on contact (enemies.md §4.2).
+    plain_touch(w, c, id, e, pid, p);
+    if e.ty == EnemyType::BombBat {
         explode(w, c, id, e);
-    } else {
-        plain_touch(w, c, id, e, pid, p);
     }
 }
 
@@ -223,7 +235,11 @@ pub fn arrow_hit(
 
 pub fn die(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
     untag(w, id, e);
-    w.core_mut(id).collider = Collider::Box(Hitbox::wrapping(6.0, 6.0, -3.0, -3.0));
+    let core = w.core_mut(id);
+    core.collider = Collider::Box(Hitbox::wrapping(6.0, 6.0, -3.0, -3.0));
+    // The body is collidable again and lands on jump-thrus.
+    core.collidable = true;
+    core.ignore_jump_thrus = false;
     set_state(w, c, id, e, DEAD);
 }
 

@@ -15,8 +15,9 @@ pub struct Portal {
     pub marker: u16,
     pub appeared: bool,
     pub auto_disappear: bool,
-    /// The last use was an auto-appear (`AppearAndSpawn`).
-    pub last_auto: bool,
+    /// The running appear tween restarts the spawning animation when it
+    /// completes (the queue was non-empty when `Appear` was called).
+    pub complete_spawn: bool,
     queue: [Option<EnemyType>; QUEUE],
     qlen: u8,
     /// Ticks into the appear/disappear tween (40 ticks).
@@ -36,6 +37,7 @@ impl StableHash for Portal {
         h.u32(self.marker as u32);
         h.bool(self.appeared);
         h.bool(self.auto_disappear);
+        h.bool(self.complete_spawn);
         h.u8(self.qlen);
         h.f32(self.tween);
         h.i32(self.tween_dir as i32);
@@ -83,7 +85,7 @@ pub fn add_portal(w: &mut World, c: &Content, i: usize) -> EntityId {
             marker: i as u16,
             appeared: false,
             auto_disappear: false,
-            last_auto: false,
+            complete_spawn: false,
             queue: [None; QUEUE],
             qlen: 0,
             tween: 0.0,
@@ -129,7 +131,8 @@ fn with(w: &mut World, id: EntityId, f: impl FnOnce(&mut Portal)) {
     }
 }
 
-/// `Appear`: false if already appeared.
+/// `Appear`: false if already appeared. The tween restarts the spawning
+/// animation on completion only if something is queued now (§2).
 pub fn appear(w: &mut World, id: EntityId) -> bool {
     let mut changed = false;
     with(w, id, |p| {
@@ -137,7 +140,7 @@ pub fn appear(w: &mut World, id: EntityId) -> bool {
             p.appeared = true;
             p.tween = 0.0;
             p.tween_dir = 1;
-            p.last_auto = false;
+            p.complete_spawn = p.qlen > 0;
             changed = true;
         }
     });
@@ -156,15 +159,20 @@ pub fn disappear(w: &mut World, id: EntityId) -> bool {
             p.appeared = false;
             p.tween = 0.0;
             p.tween_dir = -1;
+            p.complete_spawn = false;
             changed = true;
         }
     });
+    if changed {
+        let x = w.core(id).pos.x;
+        w.sound("sfx_portalDisappear", x);
+    }
     changed
 }
 
-/// `ForceDisappear`: only if the last use was not an auto-appear.
+/// `ForceDisappear`: not while auto-disappearing.
 pub fn force_disappear(w: &mut World, id: EntityId) -> bool {
-    let auto = matches!(w.kind(id), Some(Kind::Portal(p)) if p.last_auto && p.auto_disappear);
+    let auto = matches!(w.kind(id), Some(Kind::Portal(p)) if p.auto_disappear);
     if auto { false } else { disappear(w, id) }
 }
 
@@ -172,10 +180,11 @@ pub fn is_open(w: &World, id: EntityId) -> bool {
     matches!(w.kind(id), Some(Kind::Portal(p)) if p.appeared)
 }
 
-/// `SpawnEnemy(name)`.
+/// `SpawnEnemy(name)`: an empty queue restarts the spawning animation now,
+/// even during the appear tween.
 pub fn spawn_enemy(w: &mut World, id: EntityId, t: EnemyType) {
     with(w, id, |p| {
-        if p.qlen == 0 && p.tween_dir != 1 {
+        if p.qlen == 0 {
             p.spawn_t = Some(0.0);
         }
         p.push(t);
@@ -190,13 +199,14 @@ pub fn appear_and_spawn(w: &mut World, id: EntityId, t: EnemyType) {
         p.auto_disappear = true;
     });
     if !appear(w, id) {
+        // Port: never leave the queue stalled on an open, idle portal (§2).
         with(w, id, |p| {
-            if p.spawn_t.is_none() {
+            let pending = p.tween_dir == 1 && p.complete_spawn;
+            if p.spawn_t.is_none() && !pending {
                 p.spawn_t = Some(0.0);
             }
         });
     }
-    with(w, id, |p| p.last_auto = true);
 }
 
 /// `ForceCancel` on every portal.
@@ -211,30 +221,31 @@ pub fn force_cancel_all(w: &mut World, c: &Content) {
     }
 }
 
+/// Sprite (spawn event), then the tween, then the add counter (§2).
 pub fn update(w: &mut World, c: &Content, id: EntityId, p: &mut Portal) {
     let tm = w.time.time_mult;
-    if p.add_counter > 0.0 {
-        p.add_counter -= tm;
-    }
-    if p.tween_dir != 0 {
-        p.tween += tm;
-        let k = (p.tween / 40.0).min(1.0);
-        p.scale = if p.tween_dir > 0 { k } else { 1.0 - k };
-        if p.tween >= 40.0 {
-            let appearing = p.tween_dir > 0;
-            p.tween_dir = 0;
-            if appearing && p.qlen > 0 {
-                w.sound("sfx_portalSpawn", w.core(id).pos.x);
-                p.spawn_t = Some(0.0);
-            }
-        }
-    }
     if let Some(t) = p.spawn_t {
         let t = t + tm;
         p.spawn_t = Some(t);
         if t >= spawn_at() {
             spawn_one(w, c, id, p);
         }
+    }
+    if p.tween_dir != 0 {
+        p.tween += tm;
+        let k = (p.tween / 40.0).min(1.0);
+        p.scale = if p.tween_dir > 0 { k } else { 1.0 - k };
+        if p.tween >= 40.0 {
+            p.tween_dir = 0;
+            if p.complete_spawn {
+                p.complete_spawn = false;
+                w.sound("sfx_portalSpawn", w.core(id).pos.x);
+                p.spawn_t = Some(0.0);
+            }
+        }
+    }
+    if p.add_counter > 0.0 {
+        p.add_counter -= tm;
     }
 }
 
@@ -266,6 +277,8 @@ fn spawn_one(w: &mut World, c: &Content, _id: EntityId, p: &mut Portal) {
             p.appeared = false;
             p.tween = 0.0;
             p.tween_dir = -1;
+            p.complete_spawn = false;
+            w.sound("sfx_portalDisappear", pos.x);
         }
     }
     w.sound("sfx_portalSpawn", pos.x);

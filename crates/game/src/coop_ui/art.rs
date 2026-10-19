@@ -661,8 +661,10 @@ fn enemy(b: &mut B, w: &World, cx: &Ctx, anims: &mut Anims, id: EntityId, e: &En
                 bat::DEAD if e.ty == Crow => {
                     if e.speed.y < 0.0 {
                         "fallingUp"
-                    } else {
+                    } else if e.speed.y > 0.0 {
                         "fallingDown"
+                    } else {
+                        "dead"
                     }
                 }
                 bat::DEAD => "dead",
@@ -686,12 +688,7 @@ fn enemy(b: &mut B, w: &World, cx: &Ctx, anims: &mut Anims, id: EntityId, e: &En
                 Elemental => "FireElemental",
                 _ => "GreenFireElemental",
             };
-            let anim = match e.state {
-                ghost::CHASE => "alert",
-                ghost::DODGE => "dodge",
-                ghost::DIE => "death",
-                _ => "idle",
-            };
+            let anim = ghost::anim(e);
             simple(b, anims, name, anim, 0, facing_scale(e), 0.0);
         }
         Cultist | ScytheCultist | BossCultist => {
@@ -700,23 +697,7 @@ fn enemy(b: &mut B, w: &World, cx: &Ctx, anims: &mut Anims, id: EntityId, e: &En
                 ScytheCultist => "ScytheCultist",
                 _ => "RedCultist",
             };
-            let airborne = e.speed.y.abs() > 0.01;
-            let anim = match e.state {
-                cultist::ATTACK => {
-                    // The purple/red second swing starts ~45 ticks in.
-                    let s = cx.art.sprite(name);
-                    let t = anims.t(id, 1, key(s, "attack", 0), frame);
-                    if e.ty != ScytheCultist && t >= 45.0 {
-                        "attackB"
-                    } else {
-                        "attackA"
-                    }
-                }
-                cultist::ATTACK_DOWN => "attackB",
-                _ if airborne => "falling",
-                _ if e.target.is_some() => "alert",
-                _ => "idle",
-            };
+            let anim = cultist::anim(e);
             simple(b, anims, name, anim, 0, facing_scale(e), 0.0);
         }
         Birdman | DarkBirdman => {
@@ -860,9 +841,9 @@ fn enemy(b: &mut B, w: &World, cx: &Ctx, anims: &mut Anims, id: EntityId, e: &En
                 }
             };
             simple(b, anims, "boss:KingReaper", anim, 0, e.scale, e.rotation);
-            if reaper::shielded(e) && e.state == reaper::ATTACK {
+            let grow = reaper::shield_height(e);
+            if grow > 0.0 {
                 let s = cx.art.sprite("boss:KingShield");
-                let grow = (anims.t(id, 2, key(s, "0", 0), frame) * 0.05).min(1.0);
                 if let Some(d) = b.anim(s, "0", w.frame as f32, pos) {
                     d.scale = Vec2::new(grow, grow);
                     d.tint = alpha(0.85);
@@ -1118,8 +1099,10 @@ fn hazard(b: &mut B, w: &World, h: &tfp_sim::enemies::hazard::Hazard, pos: Vec2)
         }
         HazardType::ReaperBomb => {
             let s = b.art.sprite("boss:KingBullet");
-            let swell = if h.speed <= 0.0 {
-                1.0 + (h.t[1] / 20.0).min(1.0) * 0.4
+            // The 20-tick swell before it explodes: scale 1 -> 2 (CubeOut).
+            let swell = if h.t[3] > 0.0 {
+                let k = ((20.0 - h.t[1]) / 20.0).clamp(0.0, 1.0);
+                1.0 + (1.0 - (1.0 - k).powi(3))
             } else {
                 1.0
             };
@@ -1134,7 +1117,10 @@ fn hazard(b: &mut B, w: &World, h: &tfp_sim::enemies::hazard::Hazard, pos: Vec2)
                 "boss:KingCrystal"
             };
             let s = b.art.sprite(name);
-            b.anim(s, "0", frame, pos);
+            match enemies::reaper::crystal_breaking(h) {
+                Some(t) => b.anim(s, "1", t, pos),
+                None => b.anim(s, "0", frame, pos),
+            };
         }
         HazardType::ReaperBeam => {
             let s = b.art.sprite("boss:KingBeam");

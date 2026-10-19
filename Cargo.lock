@@ -1719,7 +1719,7 @@ dependencies = [
 
 [[package]]
 name = "tfp-assets"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "log",
  "png",
@@ -1729,7 +1729,7 @@ dependencies = [
 
 [[package]]
 name = "tfp-net"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bincode",
  "bytemuck",
@@ -1741,7 +1741,7 @@ dependencies = [
 
 [[package]]
 name = "tfp-render"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "glam",
@@ -1754,7 +1754,7 @@ dependencies = [
 
 [[package]]
 name = "tfp-sim"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "libm",
@@ -1832,7 +1832,7 @@ dependencies = [
 
 [[package]]
 name = "towerfall-port"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bincode",

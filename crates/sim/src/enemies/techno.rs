@@ -35,12 +35,9 @@ pub fn update(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> u8 {
     match e.state {
         PATROL => {
             e.target_speed.y = 0.1 * e.sine.value;
+            // Its own collider 20 px ahead.
             let ahead = w.core(id).pos + Vec2::new(20.0 * e.facing as f32, 0.0);
-            if w.point_check(
-                c,
-                wrap(ahead, w.world_size(c).w, w.world_size(c).h),
-                Tag::Solid,
-            ) {
+            if w.check_at(c, id, ahead, Tag::Solid) {
                 e.facing = -e.facing;
                 e.target_speed.x = e.facing as f32;
             }
@@ -99,13 +96,13 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
                 .filter(|&t| w.exists(t))
                 .map(|t| shortest(w, c, me, w.core(t).pos).safe_normalize())
                 .unwrap_or(Vec2::new(1.0, 0.0));
-            if !ok || w.line_check(c, me, me + dir * 20.0, Tag::Solid) {
+            if !ok || w.check_at(c, id, me + dir * 20.0, Tag::Solid) {
                 set_state(w, c, id, e, PATROL);
                 e.co.finish();
                 return;
             }
             w.sound("en_technoMageFire", me.x);
-            hazard::spawn_missile(w, me, dir);
+            hazard::spawn_missile(w, me, dir, e.target);
             set_facing(e, dir.x);
             e.n[SHOT] += 1;
             if e.n[SHOT] < 2 {
@@ -155,14 +152,11 @@ pub fn dead_touch(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
     explode(w, c, id, e);
 }
 
-/// Killed: only the Enemy tag goes; the body stays a hazard.
+/// Killed: only the Enemy tag goes. The body stays non-collidable (the
+/// base death), so it flies about for 60 ticks and explodes (§4.12).
 pub fn die(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
     e.untagged = true;
     w.tag(id, Tag::Enemy, false);
     w.core_mut(id).collider = Collider::Box(Hitbox::wrapping(12.0, 12.0, -6.0, -6.0));
-    w.core_mut(id).collidable = true;
-    if e.speed.is_zero() {
-        e.speed = Vec2::new(e.facing as f32, -1.0);
-    }
     set_state(w, c, id, e, DEAD);
 }

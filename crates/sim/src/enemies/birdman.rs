@@ -32,6 +32,19 @@ fn target_point(w: &World, e: &Enemy) -> Option<Vec2> {
 
 pub fn update(w: &mut World, _c: &Content, id: EntityId, e: &mut Enemy) -> u8 {
     let tm = w.time.time_mult;
+    // The sprite's squash relaxes every tick.
+    e.scale.x = approach(e.scale.x.abs(), 1.0, 0.05 * tm);
+    e.scale.y = approach(e.scale.y, 1.0, 0.05 * tm);
+    // The flap animation (any state, until the attack animation replaces
+    // it) pushes up when it reaches its 4th frame, before the state logic.
+    if e.t[FLAP_T] > 0.0 {
+        e.t[FLAP_T] -= tm;
+        if e.t[FLAP_T] <= 0.0 {
+            e.speed.y = -1.5;
+            e.scale = Vec2::new(1.2, 0.8);
+            w.sound("en_birdmanWingflap", w.core(id).pos.x);
+        }
+    }
     match e.state {
         IDLE => {
             e.speed.x = approach(e.speed.x, e.target_speed.x, 0.1 * tm);
@@ -40,17 +53,11 @@ pub fn update(w: &mut World, _c: &Content, id: EntityId, e: &mut Enemy) -> u8 {
                 e.t[FLAP_CD] -= tm;
             } else if e.target_speed.y < 0.0 {
                 e.t[FLAP_CD] = 30.0;
-                e.t[FLAP_T] = 18.0;
+                e.t[FLAP_T] = anim_ticks(0.1, 3);
             }
-            if e.t[FLAP_T] > 0.0 {
-                e.t[FLAP_T] -= tm;
-                if e.t[FLAP_T] <= 0.0 {
-                    e.speed.y = -1.5;
-                    e.scale = Vec2::new(1.2, 0.8);
-                    w.sound("en_birdmanWingflap", w.core(id).pos.x);
-                }
+            if e.t[ATTACK_CD] > 0.0 {
+                e.t[ATTACK_CD] -= tm;
             }
-            e.t[ATTACK_CD] -= tm;
             IDLE
         }
         _ => {
@@ -66,7 +73,8 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
             if w.rng.chance(0.2) {
                 e.facing = -e.facing;
             }
-            let vy = if w.rng.next_max(2) == 0 { -1.0 } else { 1.0 };
+            // `Choose(1, -1)`: index 0 is down.
+            let vy = if w.rng.next_max(2) == 0 { 1.0 } else { -1.0 };
             e.target_speed = Vec2::new(e.facing as f32 * 0.5, vy);
             e.co.yield_frames(40.0, 1);
         }
@@ -74,9 +82,10 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
             if e.t[ATTACK_CD] <= 0.0
                 && let Some((pid, pp, _)) = closest_player(w, c, id, e, 10000.0, true)
             {
+                // Its own hitbox, moved 20 px toward the archer, is clear.
                 let me = w.core(id).pos;
                 let dir = shortest(w, c, me, pp).safe_normalize();
-                if !w.line_check(c, me, me + dir * 20.0, Tag::Solid) {
+                if !w.check_at(c, id, me + dir * 20.0, Tag::Solid) {
                     e.target = Some(pid);
                     e.set(F_TARGET_ARROW, false);
                     set_state(w, c, id, e, ATTACK);
@@ -89,12 +98,17 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
         (ATTACK, 0) => {
             e.target_speed = Vec2::ZERO;
             if e.has(F_TARGET_ARROW) {
+                e.t[FLAP_T] = 0.0;
                 e.co.yield_frames(4.0, 2);
             } else {
                 e.co.yield_frames(6.0, 1);
             }
         }
-        (ATTACK, 1) => e.co.yield_frames(4.0, 2),
+        (ATTACK, 1) => {
+            // The attack animation replaces a running flap.
+            e.t[FLAP_T] = 0.0;
+            e.co.yield_frames(4.0, 2);
+        }
         (ATTACK, 2) => {
             let me = w.core(id).pos;
             w.sound("en_birdmanTornado", me.x);
@@ -118,7 +132,7 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
 }
 
 pub fn collide_h(e: &mut Enemy) {
-    if sign(e.speed.x) == sign(e.target_speed.x) && e.target_speed.x != 0.0 {
+    if sign(e.speed.x) == sign(e.target_speed.x) {
         e.target_speed.x = -e.target_speed.x;
         e.facing = -e.facing;
     }
@@ -126,7 +140,7 @@ pub fn collide_h(e: &mut Enemy) {
 }
 
 pub fn collide_v(e: &mut Enemy) {
-    if sign(e.speed.y) == sign(e.target_speed.y) && e.target_speed.y != 0.0 {
+    if sign(e.speed.y) == sign(e.target_speed.y) {
         e.target_speed.y = -e.target_speed.y;
     }
     e.speed.y = 0.0;

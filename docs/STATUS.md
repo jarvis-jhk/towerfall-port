@@ -101,6 +101,15 @@ Living plan. Update when a step finishes.
       angle, drilling moves on whole pixels and breaks out with a normal
       move, per-state collision handlers, cooldown/strict-range details,
       scale relax, removal with the explosion anim (enemies.md §4.7).
+      Enemy fidelity pass (2026-10-19, owner's request after the mole):
+      every family re-compared with the reference and spec + code fixed:
+      base class/perception/portal (§1, §2), slimes and bats (§4.1-4.2),
+      ghosts and cultists (§4.3-4.4), birdman and skeletons (§4.5-4.6),
+      skull, crystals, exploder, worm, techno mage (§4.8-4.12), King Reaper
+      (§4.13); tests in `crates/sim/tests/fidelity_*.rs`. The parallel
+      workers were cut off mid-run; the tree was finished and verified
+      (fmt, clippy, workspace tests) but the Reaper slice has no dedicated
+      new tests yet. v0.3.0 prerelease.
 
 ## Final verification (2026-10-17, this tree)
 

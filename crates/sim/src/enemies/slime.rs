@@ -107,12 +107,13 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
             }
             e.co.yield_frames(5.0, 1);
         }
+        // The squash loop tests before each step (enemies.md §4.1).
         1 => {
-            e.scale.y = approach(e.scale.y, 0.6, 0.1);
-            if e.scale.y <= 0.61 {
-                e.co.yield_frames(5.0, 2);
-            } else {
+            if e.scale.y > 0.61 {
+                e.scale.y = approach(e.scale.y, 0.6, 0.1 * w.time.time_mult);
                 e.co.yield_next(1);
+            } else {
+                e.co.yield_frames(5.0, 2);
             }
         }
         _ => {
@@ -127,14 +128,14 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
 
 pub fn collide_v(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
     if e.speed.y > 0.0 && e.state != DIE {
+        // Ledge edge: a raw shift off it, still falling (vy kept).
         if !actor::check_below_x(w, c, id, -2.0 * e.facing as f32) {
-            actor::move_h(w, c, id, -2.0 * e.facing as f32);
-            actor::move_v(w, c, id, 1.0);
-        } else {
-            e.scale.y = 0.6;
-            let s = if e.speed.y >= 1.8 { LAND } else { WALK };
-            set_state(w, c, id, e, s);
+            w.core_mut(id).pos += Vec2::new(-2.0 * e.facing as f32, 1.0);
+            return;
         }
+        e.scale.y = 0.6;
+        let s = if e.speed.y >= 1.8 { LAND } else { WALK };
+        set_state(w, c, id, e, s);
     }
     e.speed.y = 0.0;
 }
@@ -152,8 +153,8 @@ pub fn touch(
     let v = shortest(w, c, me, pp);
     let toward = sign(v.x) as i8 == e.facing && e.speed.x.abs() > 0.05;
     if toward || pp.y >= me.y - 2.0 {
+        e.speed = (me + e.sight - pp).safe_normalize_len(2.0);
         hurt_player(w, c, id, pid, p);
-        e.speed = (me - pp).safe_normalize_len(2.0);
     } else {
         plain_touch(w, c, id, e, pid, p);
     }
@@ -168,5 +169,7 @@ pub fn die(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
 pub fn post_update(w: &mut World, _c: &Content, _id: EntityId, e: &mut Enemy) {
     let tm = w.time.time_mult;
     e.scale.x = 1.0 + 0.2 * e.sine.value;
-    e.scale.y = approach(e.scale.y, 1.0, 0.02 * tm);
+    if e.state != JUMP {
+        e.scale.y = approach(e.scale.y, 1.0, 0.02 * tm);
+    }
 }

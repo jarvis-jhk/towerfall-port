@@ -126,7 +126,12 @@ fn every_enemy_draws_from_the_atlas() {
             Vec2::new(1.0, 0.0),
             None,
         ),
-        tfp_sim::enemies::hazard::spawn_missile(w, Vec2::new(80.0, 225.0), Vec2::new(1.0, 0.0)),
+        tfp_sim::enemies::hazard::spawn_missile(
+            w,
+            Vec2::new(80.0, 225.0),
+            Vec2::new(1.0, 0.0),
+            None,
+        ),
         tfp_sim::enemies::hazard::spawn_bomb(
             w,
             Vec2::new(120.0, 225.0),

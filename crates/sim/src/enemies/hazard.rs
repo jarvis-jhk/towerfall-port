@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::impl_hash_enum;
-use crate::math::{angle_approach, angle_to_vector, approach, cos, max, sin};
+use crate::math::{angle_approach, angle_to_vector, approach, cos, sin};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HazardType {
@@ -94,24 +94,26 @@ pub fn spawn_tornado(w: &mut World, pos: Vec2, dir: Vec2, target: Option<EntityI
     )
 }
 
-pub fn spawn_missile(w: &mut World, pos: Vec2, dir: Vec2) -> EntityId {
+/// A techno mage's missile homing on `target` (enemies.md §4.12): depth
+/// -89, seek-able at priority 0 with neutral allegiance.
+pub fn spawn_missile(w: &mut World, pos: Vec2, dir: Vec2, target: Option<EntityId>) -> EntityId {
     let mut h = blank(HazardType::TechnoMissile);
     h.speed = 0.5;
     h.dir = dir;
-    let mut core_tags = vec![Tag::PlayerCollider, Tag::Target];
-    core_tags.dedup();
+    h.target = target;
     let id = add(
         w,
         pos,
         Hitbox::wrapping(8.0, 8.0, -4.0, -4.0),
         None,
-        &core_tags,
+        &[Tag::PlayerCollider, Tag::Target],
         h,
     );
     let core = w.core_mut(id);
+    core.depth = -89;
     core.seek = true;
-    core.seek_priority = 50;
-    core.allegiance = Allegiance::Red;
+    core.seek_priority = 0;
+    core.allegiance = Allegiance::Neutral;
     id
 }
 
@@ -120,14 +122,17 @@ pub fn spawn_bomb(w: &mut World, pos: Vec2, vel: Vec2, owner: EntityId) -> Entit
     h.vel = vel;
     h.speed = vel.length();
     h.owner = Some(owner);
-    add(
+    let id = add(
         w,
         pos,
         Hitbox::wrapping(8.0, 8.0, -4.0, -4.0),
         None,
         &[Tag::PlayerCollider, Tag::Target],
         h,
-    )
+    );
+    // A plain actor: it lands on jump-thrus.
+    w.core_mut(id).ignore_jump_thrus = false;
+    id
 }
 
 pub fn spawn_crystal(w: &mut World, owner: EntityId, angle: f32, bolt: bool) -> EntityId {
@@ -140,7 +145,7 @@ pub fn spawn_crystal(w: &mut World, owner: EntityId, angle: f32, bolt: bool) -> 
         w,
         pos,
         Hitbox::wrapping(10.0, 10.0, -5.0, -5.0),
-        None,
+        Some(Hitbox::wrapping(14.0, 14.0, -7.0, -7.0)),
         &[Tag::PlayerCollider, Tag::Target],
         h,
     )
@@ -170,90 +175,143 @@ pub fn update(w: &mut World, c: &Content, id: EntityId, h: &mut Hazard) {
     }
 }
 
-fn nearest_living_player(w: &World, c: &Content, from: Vec2) -> Option<(EntityId, Vec2)> {
-    let ws = w.world_size(c);
-    w.players()
-        .filter(|&p| w.player(p).is_some_and(|q| !q.dead))
-        .map(|p| (p, w.core(p).pos))
-        .min_by(|a, b| {
-            wrap_dist_sq(from, a.1, ws.w, ws.h).total_cmp(&wrap_dist_sq(from, b.1, ws.w, ws.h))
-        })
+fn tornado(w: &mut World, c: &Content, id: EntityId, h: &mut Hazard, tm: f32) {
+    // Steer toward a living player target; a dead one is dropped for good.
+    if let Some(t) = h.target {
+        if w.player(t).is_none_or(|p| p.dead) {
+            h.target = None;
+        } else {
+            let me = w.core(id).pos;
+            let v = shortest(w, c, me, w.core(t).pos);
+            let a = angle_approach(h.dir.angle(), v.angle(), PI / 90.0 * tm);
+            h.dir = angle_to_vector(a, 1.0);
+        }
+    }
+    h.speed = approach(h.speed, 0.0, 0.05 * tm);
+    // A free (non-actor) move per axis: a step into a Solid is undone and
+    // flips that axis of the direction (enemies.md §4.5).
+    let perp = Vec2::new(-h.dir.y, h.dir.x);
+    let v = (h.dir + perp * (0.4 * h.sine.value)) * h.speed * tm;
+    let p = w.core(id).pos;
+    let px = Vec2::new(p.x + v.x, p.y);
+    if w.check_at(c, id, px, Tag::Solid) {
+        h.dir.x = -h.dir.x;
+    } else {
+        w.core_mut(id).pos = px;
+    }
+    let p = w.core(id).pos;
+    let py = Vec2::new(p.x, p.y + v.y);
+    if w.check_at(c, id, py, Tag::Solid) {
+        h.dir.y = -h.dir.y;
+    } else {
+        w.core_mut(id).pos = py;
+    }
+    // Dangerous until it slows below 0.6; the fade starts the tick after.
+    if w.core(id).collidable {
+        if h.speed < 0.6 {
+            w.core_mut(id).collidable = false;
+        }
+        return;
+    }
+    h.alpha -= 0.1 * tm;
+    if h.alpha <= 0.0 {
+        w.remove(id);
+    }
 }
 
-fn tornado(w: &mut World, c: &Content, id: EntityId, h: &mut Hazard, tm: f32) {
-    h.speed = approach(h.speed, 0.0, 0.05 * tm);
+/// Heading turns at most 0.5 degrees a tick toward its (living) target;
+/// moves directly, sliding along walls for 30 updates, then exploding on
+/// contact (§4.12).
+fn missile(w: &mut World, c: &Content, id: EntityId, h: &mut Hazard, tm: f32) {
+    let me = w.core(id).pos;
     if let Some(t) = h.target
         && w.player(t).is_some_and(|p| !p.dead)
     {
-        let me = w.core(id).pos;
-        let v = shortest(w, c, me, w.core(t).pos);
-        let a = angle_approach(h.dir.angle(), v.angle(), PI / 90.0 * tm);
-        h.dir = angle_to_vector(a, 1.0);
+        let to = w.core(t).pos - me;
+        let max = PI / 360.0 * tm;
+        let a = crate::math::clamp(
+            crate::math::angle_diff(h.dir.angle(), to.angle()),
+            -max,
+            max,
+        );
+        let (s, co) = (sin(a), cos(a));
+        h.dir = Vec2::new(h.dir.x * co - h.dir.y * s, h.dir.x * s + h.dir.y * co);
     }
-    if h.speed < 0.6 {
-        w.core_mut(id).collidable = false;
-        h.alpha = approach(h.alpha, 0.0, 0.1 * tm);
-        if h.alpha <= 0.0 {
-            w.remove(id);
-        }
-    }
-    let perp = Vec2::new(-h.dir.y, h.dir.x);
-    let v = (h.dir + perp * (0.4 * h.sine.value)) * h.speed;
-    if actor::move_h(w, c, id, v.x * tm).is_some() {
-        h.dir.x = -h.dir.x;
-    }
-    if actor::move_v(w, c, id, v.y * tm).is_some() {
-        h.dir.y = -h.dir.y;
-    }
-}
-
-fn missile(w: &mut World, c: &Content, id: EntityId, h: &mut Hazard, tm: f32) {
-    h.speed = (h.speed + 0.05 * tm).min(2.5);
-    let me = w.core(id).pos;
-    if let Some((_, pp)) = nearest_living_player(w, c, me) {
-        let v = shortest(w, c, me, pp);
-        let a = angle_approach(h.dir.angle(), v.angle(), PI / 360.0 * tm);
-        h.dir = angle_to_vector(a, 1.0);
-    }
-    let v = h.dir * (h.speed * tm);
+    h.speed = approach(h.speed, 2.5, 0.05 * tm);
+    let step = h.speed * tm;
     if h.t[AGE] <= 30.0 {
-        if actor::move_h(w, c, id, v.x).is_some() {
+        let p = w.core(id).pos + Vec2::new(h.dir.x * step, 0.0);
+        if w.check_at(c, id, p, Tag::Solid) {
             h.dir.x = 0.0;
             h.dir = h.dir.safe_normalize();
+        } else {
+            w.core_mut(id).pos = p;
         }
-        if actor::move_v(w, c, id, v.y).is_some() {
+        let p = w.core(id).pos + Vec2::new(0.0, h.dir.y * step);
+        if w.check_at(c, id, p, Tag::Solid) {
             h.dir.y = 0.0;
             h.dir = h.dir.safe_normalize();
+        } else {
+            w.core_mut(id).pos = p;
         }
     } else {
-        let hit = actor::move_h(w, c, id, v.x).is_some() || actor::move_v(w, c, id, v.y).is_some();
-        if hit {
-            explode(w, c, id, -1);
+        let p = w.core(id).pos + h.dir * step;
+        if w.check_at(c, id, p, Tag::Solid) {
+            missile_explode(w, c, id);
+        } else {
+            w.core_mut(id).pos = p;
         }
     }
 }
 
+/// Harmless and untouchable by arrows for its first 20 updates.
+fn missile_live(h: &Hazard) -> bool {
+    h.t[AGE] >= 20.0
+}
+
+fn missile_explode(w: &mut World, c: &Content, id: EntityId) {
+    if w.core(id).marked_for_removal {
+        return;
+    }
+    w.sound("pu_bombArrowExplode", w.core(id).pos.x);
+    explode(w, c, id, -1);
+}
+
+/// Reaper bomb (enemies.md §4.13): slows while moving; the tick after it
+/// is found at rest its 20-tick swell starts (`t[3]` = started, `t[1]` =
+/// ticks left), once, and it explodes when the swell ends.
 fn bomb(w: &mut World, c: &Content, id: EntityId, h: &mut Hazard, tm: f32) {
-    if h.t[1] > 0.0 {
+    if h.t[3] > 0.0 {
         h.t[1] -= tm;
         if h.t[1] <= 0.0 {
-            explode(w, c, id, -1);
+            bomb_explode(w, c, id);
+            return;
         }
-        return;
     }
-    h.speed = max(0.0, h.speed - 0.032 * tm);
-    h.vel = h.vel.safe_normalize() * h.speed;
-    if h.speed <= 0.0 {
-        h.t[1] = 20.0;
-        return;
-    }
-    if actor::move_h(w, c, id, h.vel.x * tm).is_some() {
-        h.vel.x *= -0.5;
-    }
-    if actor::move_v(w, c, id, h.vel.y * tm).is_some() {
-        h.vel.y *= -0.5;
+    if h.vel == Vec2::ZERO {
+        if h.t[3] == 0.0 {
+            h.t[3] = 1.0;
+            h.t[1] = 20.0;
+        }
+    } else {
+        h.vel = crate::math::approach_vec(h.vel, Vec2::ZERO, 0.032 * tm);
+        if actor::move_h(w, c, id, h.vel.x * tm).is_some() {
+            h.vel.x *= -0.5;
+        }
+        if actor::move_v(w, c, id, h.vel.y * tm).is_some() {
+            h.vel.y *= -0.5;
+        }
     }
     h.speed = h.vel.length();
+}
+
+/// The reaper bomb goes off: its sound, a plain ownerless explosion.
+fn bomb_explode(w: &mut World, c: &Content, id: EntityId) {
+    if w.core(id).marked_for_removal {
+        return;
+    }
+    w.sound("pu_bombArrowExplode", w.core(id).pos.x);
+    explode(w, c, id, -1);
 }
 
 pub fn explode(w: &mut World, c: &Content, id: EntityId, owner: i8) {
@@ -277,11 +335,11 @@ pub fn on_player_collide(w: &mut World, c: &Content, id: EntityId, pid: EntityId
             player::hurt(w, c, pid, p, DeathCause::Enemy, from, -1, None);
         }
         HazardType::TechnoMissile => {
-            if h.t[AGE] > 20.0 {
-                explode(w, c, id, -1);
+            if missile_live(&h) {
+                missile_explode(w, c, id);
             }
         }
-        HazardType::ReaperBomb => explode(w, c, id, -1),
+        HazardType::ReaperBomb => bomb_explode(w, c, id),
         HazardType::ReaperBeam => {}
     }
 }
@@ -303,11 +361,11 @@ pub fn on_arrow_hit(
             true
         }
         HazardType::TechnoMissile => {
-            if h.t[AGE] <= 20.0 {
+            if !missile_live(&h) {
                 return false;
             }
-            arrow::enter_fall_mode(w, aid, a, true, false, true);
-            explode(w, c, id, -1);
+            arrow::enter_fall_mode(w, aid, a, true, false, false);
+            missile_explode(w, c, id);
             true
         }
         HazardType::ReaperBomb => {
@@ -319,9 +377,8 @@ pub fn on_arrow_hit(
             true
         }
         HazardType::ReaperCrystal => {
-            arrow::enter_fall_mode(w, aid, a, true, false, true);
-            w.core_mut(id).collidable = false;
-            w.remove(id);
+            arrow::enter_fall_mode(w, aid, a, true, false, false);
+            reaper::crystal_break(w, id);
             true
         }
         HazardType::ReaperBeam => false,

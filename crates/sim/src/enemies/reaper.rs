@@ -4,7 +4,7 @@
 use super::hazard::{Hazard, HazardType};
 use super::*;
 use crate::components::Ease;
-use crate::math::{angle_to_vector, approach, lerp, min};
+use crate::math::{angle_to_vector, approach, min};
 
 pub const APPEAR: u8 = 0;
 pub const ATTACK: u8 = 1;
@@ -17,13 +17,23 @@ const PHASE: usize = 1;
 const MOVE_MULT: usize = 2;
 const MOVE_TARGET: usize = 3;
 const TIMER: usize = 4;
+/// Drawn shield height, 0..1.
+const SHIELD_H: usize = 5;
 const DIFF: usize = 0;
 const THROWS: usize = 1;
-const CYCLE: usize = 2;
 pub const F_FINAL: u16 = F_TYPE;
 pub const F_INTRO: u16 = F_TYPE << 1;
 /// Tower 11 variant: boss skeletons have wings, two extra portals.
 pub const F_WING: u16 = F_TYPE << 2;
+
+/// The scale pops of the attacks (`AttackScale`).
+const POP: f32 = 1.4;
+/// Laser arrows of the boss start at this bounce count (no reflections).
+const LASER_BOUNCE_START: i32 = 7;
+/// Crystal hazard slots: orbit ticks, orbit amount, break ticks left.
+const C_ORBIT_T: usize = 1;
+const C_ORBIT: usize = 2;
+const C_BREAK: usize = 3;
 
 pub fn init(core: &mut Core, e: &mut Enemy) {
     e.health = 3;
@@ -32,6 +42,8 @@ pub fn init(core: &mut Core, e: &mut Enemy) {
     core.depth = -300;
     core.collidable = false;
     core.seek = false;
+    // A plain colliding actor: it lands on jump-thrus (§1.1).
+    core.ignore_jump_thrus = false;
     e.t[MOVE_MULT] = 1.0;
     e.t[MOVE_TARGET] = 1.0;
 }
@@ -64,6 +76,11 @@ pub fn shielded(e: &Enemy) -> bool {
     e.t[SHIELD] > 0.0
 }
 
+/// The drawn shield height (grows while shielded, shrinks after).
+pub fn shield_height(e: &Enemy) -> f32 {
+    e.t[SHIELD_H]
+}
+
 fn activate_shield(e: &mut Enemy) {
     e.t[SHIELD] = 330.0 + 60.0 * e.n[DIFF] as f32 - 30.0 * e.health as f32;
 }
@@ -74,12 +91,20 @@ fn d(e: &Enemy) -> f32 {
 
 pub fn enter(w: &mut World, _c: &Content, id: EntityId, e: &mut Enemy, s: u8) {
     let x = w.core(id).pos.x;
+    // Every other state is entered from Attack: its leave hook first.
+    if s != ATTACK && s != APPEAR {
+        let core = w.core_mut(id);
+        core.collidable = false;
+        core.seek = false;
+        e.t[MOVE_TARGET] = 1.0;
+    }
     match s {
         ATTACK => {
             let core = w.core_mut(id);
             core.collidable = true;
             core.seek = true;
-            e.n[CYCLE] = 0;
+            // The hover sine restarts.
+            e.t[PHASE] = 0.0;
         }
         HURT => {
             w.sound("boss_hit", x);
@@ -87,14 +112,12 @@ pub fn enter(w: &mut World, _c: &Content, id: EntityId, e: &mut Enemy, s: u8) {
             w.screen_shake(20.0);
         }
         DISAPPEAR => {
-            w.sound("boss_disappear", x);
+            w.sound("boss_hit", x);
             w.screen_shake(20.0);
-            w.core_mut(id).collidable = false;
         }
         // The final death: dark ends, the floors die out at once.
         DEAD => {
             w.sound("boss_death", x);
-            w.core_mut(id).collidable = false;
             e.t[TIMER] = -1.0;
             e.t[PHASE] = 0.0;
             crate::pickups::orbs::end_dark(w);
@@ -111,27 +134,48 @@ fn living_players(w: &World) -> usize {
 }
 
 pub fn update(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> u8 {
+    let next = state_update(w, c, id, e);
+    // After the state logic: the scale relaxes, the shield grows/shrinks.
+    let tm = w.time.time_mult;
+    e.scale = Vec2::new(
+        approach(e.scale.x, 1.0, 0.02 * tm),
+        approach(e.scale.y, 1.0, 0.02 * tm),
+    );
+    let x = w.core(id).pos.x;
+    if shielded(e) {
+        if e.t[SHIELD_H] == 0.0 {
+            w.sound("boss_shieldForm", x);
+        }
+        e.t[SHIELD_H] = approach(e.t[SHIELD_H], 1.0, 0.05 * tm);
+    } else {
+        if e.t[SHIELD_H] == 1.0 {
+            w.sound("boss_shieldLeave", x);
+        }
+        e.t[SHIELD_H] = approach(e.t[SHIELD_H], 0.0, 0.1 * tm);
+    }
+    next
+}
+
+fn state_update(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> u8 {
     let tm = w.time.time_mult;
     let ws = w.world_size(c);
     let centre = Vec2::new(ws.w / 2.0, ws.h / 2.0);
     match e.state {
         APPEAR => {
             if e.has(F_INTRO) {
-                e.t[TIMER] += tm;
+                // The 180-tick move tween takes its first step the tick
+                // after the coroutine started it.
                 let k = Ease::CubeInOut.apply((e.t[TIMER] / 180.0).min(1.0));
                 let p = e.target_pos + (centre - e.target_pos) * k;
                 w.core_mut(id).pos = p;
+                e.t[TIMER] += tm;
             }
             e.speed = Vec2::ZERO;
             APPEAR
         }
-        ATTACK | HURT => {
-            if e.state == ATTACK && e.t[SHIELD] > 0.0 && living_players(w) > 0 {
+        ATTACK => {
+            if e.t[SHIELD] > 0.0 && living_players(w) > 0 {
                 e.t[SHIELD] -= tm;
-            }
-            if e.state == HURT {
-                approach_speed(e, Vec2::ZERO, 0.3 * tm);
-                return HURT;
             }
             let period = 240.0 - 20.0 * e.n[DIFF] as f32;
             e.t[PHASE] += PI * 2.0 / period * tm;
@@ -140,20 +184,20 @@ pub fn update(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> u8 {
             let desired = centre
                 + Vec2::new(16.0 * crate::math::sin(a), 12.0 * crate::math::sin(2.0 * a))
                     * e.t[MOVE_MULT];
-            let mut v = shortest(w, c, w.core(id).pos, desired);
-            if v.length() > 2.0 {
+            let mut v = desired - w.core(id).pos;
+            if v.length_sq() > 4.0 {
                 v = v.safe_normalize() * 2.0;
             }
             approach_speed(e, v, 0.8 * tm);
             ATTACK
         }
-        DISAPPEAR => {
-            approach_speed(e, Vec2::ZERO, 0.1 * tm);
-            DISAPPEAR
+        HURT | DISAPPEAR => {
+            approach_speed(e, Vec2::ZERO, 0.3 * tm);
+            e.state
         }
         _ => {
             // Drift to the centre; count the death animation's ticks.
-            let mut v = shortest(w, c, w.core(id).pos, centre);
+            let mut v = centre - w.core(id).pos;
             if v.length_sq() > 4.0 {
                 v = v.safe_normalize() * 2.0;
             }
@@ -179,8 +223,9 @@ fn portal_pool(w: &World, c: &Content, e: &Enemy) -> Vec<EntityId> {
         .collect()
 }
 
-fn spawn_minions(w: &mut World, _c: &Content, e: &Enemy) -> bool {
-    let total = enemy_count(w) as i32 - 1 + portal::queued_total(w) as i32;
+fn spawn_minions(w: &mut World, c: &Content, e: &Enemy) -> bool {
+    // `TotalEnemies`: the boss itself counts.
+    let total = enemy_count(w) as i32 + portal::queued_total(w) as i32;
     let skel = EnemyType::Skeleton(SkelKind {
         arrow: ArrowType::Normal,
         shield: false,
@@ -197,48 +242,53 @@ fn spawn_minions(w: &mut World, _c: &Content, e: &Enemy) -> bool {
         4 if total < 2 => (skel, 1),
         _ => return false,
     };
-    let pool = portal_pool(w, _c, e);
-    if pool.is_empty() {
-        return false;
+    let pool = portal_pool(w, c, e);
+    if !pool.is_empty() {
+        for _ in 0..n {
+            let p = pool[w.rng.choose_index(pool.len())];
+            portal::appear_and_spawn(w, p, ty);
+        }
     }
-    for _ in 0..n {
-        let p = pool[w.rng.choose_index(pool.len())];
-        portal::appear_and_spawn(w, p, ty);
-    }
+    // The wait follows whenever the sequence asked for spawns.
     true
 }
 
-fn throw_bomb(w: &mut World, c: &Content, id: EntityId, two: Option<f32>) {
+/// Aim error: uniform in [-10, +10) degrees.
+fn aim_error(w: &mut World) -> f32 {
+    -PI / 18.0 + PI / 9.0 * w.rng.next_float()
+}
+
+/// One release (`two` = the angle offset of a two-bomb release).
+fn throw_bomb(w: &mut World, c: &Content, id: EntityId, e: &Enemy, two: Option<f32>) {
     let me = w.core(id).pos;
     let start = me + Vec2::new(0.0, 16.0);
-    let ws = w.world_size(c);
-    let target = w
-        .players()
-        .filter(|&p| w.player(p).is_some_and(|q| !q.dead))
-        .map(|p| w.core(p).pos)
-        .min_by(|a, b| {
-            wrap_dist_sq(start, *a, ws.w, ws.h).total_cmp(&wrap_dist_sq(start, *b, ws.w, ws.h))
-        });
-    let (tp, near_wall) = match target {
-        Some(t) => (t, t.x < 30.0 || t.x > ws.w - 30.0),
-        None => (start + angle_to_vector(w.rng.next_angle(), 60.0), false),
-    };
-    let mut a = shortest(w, c, start, tp).angle();
-    let mut speed = 3.0;
-    if near_wall {
-        a += if tp.x < ws.w / 2.0 { 5.0 } else { -5.0 } * PI / 180.0;
-        speed *= 1.2;
+    let off = two.unwrap_or(0.0);
+    let aim = |t: Vec2| (t - start).angle();
+    let mut bombs: Vec<(f32, f32)> = Vec::new();
+    if let Some((_, tp, _)) = closest_player(w, c, id, e, f32::MAX, false) {
+        let a = aim(tp);
+        if tp.x < 30.0 || tp.x > 290.0 {
+            let turn = if tp.x < 160.0 { PI / 36.0 } else { -PI / 36.0 };
+            bombs.push((a + off + turn, 3.0 * 1.2));
+        } else {
+            bombs.push((a + off + aim_error(w), 3.0));
+        }
+        if two.is_some() {
+            bombs.push((a - off + aim_error(w), 3.0));
+        }
     } else {
-        a += (w.rng.next_float() * 20.0 - 10.0) * PI / 180.0;
+        let target = me + angle_to_vector(w.rng.next_angle(), 60.0);
+        let a = aim(target);
+        if two.is_some() {
+            bombs.push((a + off + aim_error(w), 3.0));
+            bombs.push((a - off + aim_error(w), 3.0));
+        } else {
+            bombs.push((a, 3.0));
+        }
     }
-    let angles: Vec<f32> = match two {
-        Some(off) => vec![a - off, a + off],
-        None => vec![a],
-    };
-    for ang in angles {
+    for (ang, speed) in bombs {
         hazard::spawn_bomb(w, start, angle_to_vector(ang, speed), id);
     }
-    w.sound("boss_bombThrow", me.x);
 }
 
 fn spawn_beams(w: &mut World, id: EntityId, e: &Enemy) {
@@ -268,18 +318,22 @@ fn spawn_beams(w: &mut World, id: EntityId, e: &Enemy) {
     }
 }
 
-fn crystals(w: &World, id: EntityId) -> Vec<EntityId> {
-    w.entities()
-        .filter(|&h| matches!(w.kind(h), Some(Kind::Hazard(hz)) if hz.owner == Some(id) && hz.ty == HazardType::ReaperCrystal))
-        .collect()
-}
-
 fn hazards_of(w: &World, id: EntityId, ty: HazardType) -> Vec<EntityId> {
     w.entities()
         .filter(
             |&h| matches!(w.kind(h), Some(Kind::Hazard(hz)) if hz.owner == Some(id) && hz.ty == ty),
         )
         .collect()
+}
+
+/// The ticks of the `transform` animation (56 frames at 0.08 s).
+fn transform_ticks() -> f32 {
+    anim_ticks(0.08, 56)
+}
+
+/// The ticks of the `disappear` animation (14 frames at 0.1 s).
+fn disappear_ticks() -> f32 {
+    anim_ticks(0.1, 14)
 }
 
 pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
@@ -301,9 +355,16 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
             e.co.yield_frames(20.0, 3);
         }
         (APPEAR, 3) => e.co.yield_frames(60.0, 4),
+        // 244 ticks in: the shield, then wait out the transform animation
+        // (polled each tick; it ended once its tick count has passed).
         (APPEAR, 4) => {
             activate_shield(e);
-            e.co.yield_frames(20.0, 99);
+            let rest = transform_ticks() - 244.0;
+            if rest > 0.0 {
+                e.co.yield_frames(rest - 1.0, 99);
+            } else {
+                co(w, c, id, e, 99);
+            }
         }
         (APPEAR, 10) => {
             w.screen_shake(20.0);
@@ -317,89 +378,127 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
             set_state(w, c, id, e, ATTACK);
             e.co.finish();
         }
-        // Attack cycle: SpawnEnemies, LaserCrystals, ThrowBomb, Beam, each followed by wait(D).
-        (ATTACK, 0) => {
+        // Attack cycle: SpawnEnemies, LaserCrystals, ThrowBomb, Beam, each
+        // followed by wait(D). Each sequence is a nested call: it starts
+        // one tick after the call and the caller resumes one tick after it.
+        (ATTACK, 0) => e.co.yield_next(1),
+        (ATTACK, 1) => {
             if spawn_minions(w, c, e) {
-                e.co.yield_frames(20.0, 1);
+                e.co.yield_frames(20.0, 2);
             } else {
-                co(w, c, id, e, 1);
+                e.co.yield_next(3);
             }
         }
-        (ATTACK, 1) => e.co.yield_frames(d(e), 2),
-        (ATTACK, 2) => e.co.yield_frames(10.0, 3),
-        (ATTACK, 3) => {
+        (ATTACK, 2) => e.co.yield_next(3),
+        (ATTACK, 3) => e.co.yield_frames(d(e), 4),
+        (ATTACK, 4) => e.co.yield_next(5),
+        (ATTACK, 5) => e.co.yield_frames(10.0, 6),
+        (ATTACK, 6) => {
+            e.scale = Vec2::new(POP, POP);
             let bolt = e.n[DIFF] >= 4;
             let n = if bolt { 3 } else { 3 + e.n[DIFF] };
             let start = w.rng.next_angle();
-            let sgn = if w.rng.next_max(2) == 0 { -1.0 } else { 1.0 };
-            let extra = [PI / 4.0, PI / 2.0, 3.0 * PI / 4.0][w.rng.choose_index(3)];
-            let sgn2 = if w.rng.next_max(2) == 0 { -1.0 } else { 1.0 };
-            let orbit = sgn * 4.0 * PI + sgn2 * extra;
             for i in 0..n {
                 let a = start + i as f32 * PI * 2.0 / n as f32;
-                let h = hazard::spawn_crystal(w, id, a, bolt);
-                if let Some(Kind::Hazard(hz)) = w.kind_mut(h) {
-                    hz.t[2] = orbit;
-                }
+                hazard::spawn_crystal(w, id, a, bolt);
             }
             w.sound("boss_crystalSpawn", x);
-            e.co.yield_frames(30.0, 4);
+            e.co.yield_frames(30.0, 7);
         }
-        (ATTACK, 4) => e.co.yield_frames(60.0, 5),
-        (ATTACK, 5) => e.co.yield_frames(d(e), 6),
-        (ATTACK, 6) => {
-            e.n[THROWS] = 0;
-            co(w, c, id, e, 7);
+        (ATTACK, 7) => {
+            let sgn = if w.rng.next_max(2) == 0 { 1.0 } else { -1.0 };
+            let extra = [PI / 4.0, PI / 2.0, 3.0 * PI / 4.0][w.rng.choose_index(3)];
+            let sgn2 = if w.rng.next_max(2) == 0 { 1.0 } else { -1.0 };
+            let orbit = sgn * 4.0 * PI + sgn2 * extra;
+            w.sound("boss_crystalSpin", x);
+            for h in hazards_of(w, id, HazardType::ReaperCrystal) {
+                if let Some(Kind::Hazard(hz)) = w.kind_mut(h) {
+                    hz.t[C_ORBIT] = orbit;
+                }
+            }
+            e.co.yield_frames(60.0, 8);
         }
-        (ATTACK, 7) => e.co.yield_frames(15.0, 8),
         (ATTACK, 8) => {
-            e.co.yield_frames(15.0, 9);
+            let mut any = false;
+            for h in hazards_of(w, id, HazardType::ReaperCrystal) {
+                let Some(Kind::Hazard(hz)) = w.kind(h).copied() else {
+                    continue;
+                };
+                if hz.t[C_BREAK] > 0.0 || w.core(h).marked_for_removal {
+                    continue;
+                }
+                let t = if hz.bolt {
+                    ArrowType::Bolt
+                } else {
+                    ArrowType::Laser
+                };
+                let pos = w.core(h).pos;
+                let a = shoot_arrow(w, id, t, pos, crystal_angle(&hz));
+                if t == ArrowType::Laser
+                    && let Some(ar) = w.arrow_mut(a)
+                {
+                    ar.extra.bounced = LASER_BOUNCE_START;
+                }
+                w.core_mut(h).collidable = false;
+                w.remove(h);
+                any = true;
+            }
+            if any {
+                w.sound("boss_crystalShoot", x);
+            }
+            e.co.yield_next(9);
         }
-        (ATTACK, 9) => {
+        (ATTACK, 9) => e.co.yield_frames(d(e), 10),
+        (ATTACK, 10) => {
+            e.n[THROWS] = 0;
+            e.co.yield_next(11);
+        }
+        // One throw: bomb anim, wait(15), sound, wait(15), release.
+        (ATTACK, 11) => e.co.yield_frames(15.0, 12),
+        (ATTACK, 12) => {
+            w.sound("boss_bombThrow", x);
+            e.co.yield_frames(15.0, 13);
+        }
+        (ATTACK, 13) => {
             let k = e.n[THROWS];
             let (two, total, gap) = match e.n[DIFF] {
                 0 => (None, 1, 0.0),
                 1 => (None, 2, 40.0),
                 2 => (Some(25.0 * PI / 180.0), 1, 0.0),
-                3 => (
-                    if k == 1 {
-                        Some(30.0 * PI / 180.0)
-                    } else {
-                        None
-                    },
-                    2,
-                    30.0,
-                ),
+                3 => (if k == 1 { Some(PI / 6.0) } else { None }, 2, 30.0),
                 _ => (None, 3, 10.0),
             };
-            throw_bomb(w, c, id, two);
+            e.scale = Vec2::new(POP, POP);
+            throw_bomb(w, c, id, e, two);
             e.n[THROWS] += 1;
             if e.n[THROWS] < total {
-                e.co.yield_frames(gap, 7);
+                e.co.yield_frames(gap, 11);
             } else {
-                e.co.yield_frames(30.0, 10);
+                e.co.yield_frames(30.0, 14);
             }
         }
-        (ATTACK, 10) => e.co.yield_frames(d(e), 11),
-        (ATTACK, 11) => {
+        (ATTACK, 14) => e.co.yield_next(15),
+        (ATTACK, 15) => e.co.yield_frames(d(e), 16),
+        (ATTACK, 16) => e.co.yield_next(17),
+        (ATTACK, 17) => {
             w.sound("boss_beam", x);
             e.t[MOVE_TARGET] = 0.2;
-            e.co.yield_frames(30.0, 12);
+            e.co.yield_frames(30.0, 18);
         }
-        (ATTACK, 12) => {
+        (ATTACK, 18) => {
             spawn_beams(w, id, e);
-            e.co.yield_frames(60.0, 13);
+            e.co.yield_frames(60.0, 19);
         }
-        (ATTACK, 13) => {
-            e.scale = Vec2::new(1.3, 1.3);
+        (ATTACK, 19) => {
+            e.scale = Vec2::new(POP, POP);
             w.screen_shake(20.0);
-            e.co.yield_frames(60.0, 14);
+            e.co.yield_frames(60.0, 20);
         }
-        (ATTACK, 14) => {
+        (ATTACK, 20) => {
             e.t[MOVE_TARGET] = 1.0;
-            e.scale = Vec2::ONE;
-            e.co.yield_frames(d(e), 0);
+            e.co.yield_next(21);
         }
+        (ATTACK, 21) => e.co.yield_frames(d(e), 0),
         (HURT, 0) => e.co.yield_frames(60.0, 1),
         (HURT, _) => {
             activate_shield(e);
@@ -407,8 +506,15 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
             e.co.finish();
         }
         (DISAPPEAR, 0) => e.co.yield_frames(30.0, 1),
+        // Removed when the disappear animation (started on entry) ends.
         (DISAPPEAR, 1) => {
-            e.co.yield_frames(30.0, 2);
+            w.sound("boss_disappear", x);
+            let rest = disappear_ticks() - 32.0;
+            if rest > 0.0 {
+                e.co.yield_frames(rest - 1.0, 2);
+            } else {
+                co(w, c, id, e, 2);
+            }
         }
         (DISAPPEAR, _) => {
             w.remove(id);
@@ -499,8 +605,12 @@ pub fn hurt(
     }
     e.speed = force;
     e.killer = killer;
-    for h in crystals(w, id) {
-        w.remove(h);
+    e.health -= damage;
+    if e.health <= 0 {
+        super::die(w, c, id, e, killer);
+    }
+    for h in hazards_of(w, id, HazardType::ReaperCrystal) {
+        crystal_break(w, h);
     }
     // `QuickFade`: every beam stops being deadly and fades out in 10.
     for h in hazards_of(w, id, HazardType::ReaperBeam) {
@@ -510,12 +620,9 @@ pub fn hurt(
             hz.t[2] = 10.0;
         }
     }
-    e.health -= damage;
-    if e.health <= 0 {
-        super::die(w, c, id, e, killer);
-        return;
+    if e.alive() {
+        set_state(w, c, id, e, HURT);
     }
-    set_state(w, c, id, e, HURT);
 }
 
 /// `Die`: every other enemy dies, portals close; final -> Dead else Disappear.
@@ -526,6 +633,8 @@ pub fn die(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
     set_state(w, c, id, e, s);
 }
 
+/// Only while collidable (Attack): the arrow hurts it, then falls; one
+/// flying upward is sent off away from the boss instead of bouncing.
 pub fn arrow_hit(
     w: &mut World,
     c: &Content,
@@ -534,15 +643,21 @@ pub fn arrow_hit(
     aid: EntityId,
     a: &mut Arrow,
 ) -> bool {
-    if !e.alive() {
+    if !w.core(id).collidable {
         return false;
     }
-    if shielded(e) || e.state != ATTACK {
-        arrow::enter_fall_mode(w, aid, a, true, false, true);
+    hurt(w, c, id, e, a.speed, 1, a.player_index);
+    if a.squished {
         return true;
     }
-    hurt(w, c, id, e, a.speed, 1, a.player_index);
-    arrow::enter_fall_mode(w, aid, a, true, false, false);
+    let sound = shielded(e);
+    if a.speed.y >= 0.0 {
+        arrow::enter_fall_mode(w, aid, a, true, false, sound);
+    } else {
+        arrow::enter_fall_mode(w, aid, a, false, false, sound);
+        let from = w.core(id).pos;
+        a.speed = (w.core(aid).pos - from).safe_normalize();
+    }
     true
 }
 
@@ -561,35 +676,67 @@ pub fn touch(
     }
 }
 
-/// Crystal lifecycle: out to radius 32 (25 ticks), orbit at 31..86, fire at 92.
-pub fn crystal_update(w: &mut World, c: &Content, id: EntityId, h: &mut Hazard, _tm: f32) {
+/// A crystal's current angle: start + the orbit tween's eased share.
+fn crystal_angle(h: &Hazard) -> f32 {
+    h.angle + h.t[C_ORBIT] * Ease::CubeInOut.apply(min(h.t[C_ORBIT_T] / 55.0, 1.0))
+}
+
+/// The ticks of a crystal's break animation (6 frames at 0.08 s).
+fn crystal_break_ticks() -> f32 {
+    anim_ticks(0.08, 6)
+}
+
+/// `Break`: sound, harmless, removed when the break animation ends.
+pub fn crystal_break(w: &mut World, id: EntityId) {
+    let Some(Kind::Hazard(h)) = w.kind_mut(id) else {
+        return;
+    };
+    if h.ty != HazardType::ReaperCrystal || h.t[C_BREAK] > 0.0 {
+        return;
+    }
+    h.t[C_BREAK] = crystal_break_ticks();
+    let core = w.core_mut(id);
+    core.collidable = false;
+    core.seek = false;
+    let x = core.pos.x;
+    w.sound("boss_crystalBreak", x);
+}
+
+/// Is this crystal breaking (and how far into the break animation)?
+pub fn crystal_breaking(h: &Hazard) -> Option<f32> {
+    (h.t[C_BREAK] > 0.0).then(|| crystal_break_ticks() - h.t[C_BREAK])
+}
+
+/// Crystal: out to radius 32 (25 ticks), then the orbit the boss starts;
+/// the boss fires and removes it.
+pub fn crystal_update(w: &mut World, _c: &Content, id: EntityId, h: &mut Hazard, tm: f32) {
     let Some(owner) = h.owner.filter(|&o| w.exists(o)) else {
         w.remove(id);
         return;
     };
-    let age = h.t[0];
-    let r = 32.0 * Ease::CubeOut.apply(min(age / 25.0, 1.0));
-    let orbit = h.t[2] * Ease::CubeInOut.apply(((age - 31.0) / 55.0).clamp(0.0, 1.0));
-    let a = h.angle + orbit;
+    if h.t[C_BREAK] > 0.0 {
+        h.t[C_BREAK] -= tm;
+        if h.t[C_BREAK] <= 0.0 {
+            w.remove(id);
+            return;
+        }
+    }
+    if h.t[C_ORBIT] != 0.0 {
+        h.t[C_ORBIT_T] += tm;
+    }
+    let r = 32.0 * Ease::CubeOut.apply(min(h.t[0] / 25.0, 1.0));
+    let a = if h.t[C_ORBIT] != 0.0 {
+        crystal_angle(h)
+    } else {
+        h.angle
+    };
     let centre = w.core(owner).pos;
     w.core_mut(id).pos = centre + angle_to_vector(a, r);
-    if age >= 92.0 {
-        let t = if h.bolt {
-            ArrowType::Bolt
-        } else {
-            ArrowType::Laser
-        };
-        let pos = w.core(id).pos;
-        shoot_arrow(w, owner, t, pos, a);
-        w.remove(id);
-        w.core_mut(id).collidable = false;
-    }
-    let _ = c;
 }
 
-/// Beam: 60 ticks of telegraph, then 30 deadly ticks fading out; it
-/// follows the boss. A quick fade (`t[2]`, the boss was hurt) is harmless
-/// and removes it after 10 ticks.
+/// Beam: 60 ticks of telegraph, then deadly from its 60th through its 90th
+/// tick while it fades, then gone; it follows the boss. A quick fade
+/// (`t[2]`, the boss was hurt) is harmless and removes it after 10 ticks.
 pub fn beam_update(w: &mut World, c: &Content, id: EntityId, h: &mut Hazard, tm: f32) {
     if let Some(o) = h.owner.filter(|&o| w.exists(o)) {
         w.core_mut(id).pos = w.core(o).pos;
@@ -603,10 +750,6 @@ pub fn beam_update(w: &mut World, c: &Content, id: EntityId, h: &mut Hazard, tm:
         return;
     }
     h.t[1] += tm;
-    if h.t[1] >= 90.0 {
-        w.remove(id);
-        return;
-    }
     if h.t[1] < 60.0 {
         return;
     }
@@ -642,7 +785,10 @@ pub fn beam_update(w: &mut World, c: &Content, id: EntityId, h: &mut Hazard, tm:
             w.put_kind(pid, Kind::Player(p));
         }
     }
-    let _ = lerp(0.0, 0.0, 0.0);
+    // The fade ends on its 90th tick, after that tick's check.
+    if h.t[1] >= 90.0 {
+        w.remove(id);
+    }
 }
 
 #[cfg(test)]

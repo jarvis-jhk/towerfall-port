@@ -2,6 +2,7 @@
 //! jester, boss. Archers that aim, shoot, dodge and catch arrows.
 
 use super::*;
+use crate::events::CharSound;
 use crate::math::{angle_to_vector, approach, max, min, snap};
 
 pub const IDLE: u8 = 0;
@@ -24,6 +25,8 @@ pub const F_SHIELD: u16 = F_TYPE;
 const F_AIMING: u16 = F_TYPE << 1;
 const F_MIMICKED: u16 = F_TYPE << 2;
 const F_CAN_MIMIC: u16 = F_TYPE << 3;
+/// Grounded at the start of the tick (used by gravity and Alert).
+const F_ON_GROUND: u16 = F_TYPE << 4;
 
 const COLLECT: Hitbox = Hitbox::wrapping(20.0, 24.0, -10.0, -12.0);
 
@@ -45,6 +48,45 @@ pub fn init(_w: &mut World, _c: &Content, _core: &mut Core, e: &mut Enemy) {
     e.t[FAKE_OUT] = 30.0;
     e.t[FAIL_ADD] = -0.1;
     e.t[GRAV] = 1.0;
+    e.n[FLAP_CD] = 30;
+    set_mimic_archer(e, -1);
+}
+
+/// Ticks left of the wings' flap animation (glide does not count down
+/// while it plays).
+fn wing_flap(e: &Enemy) -> f32 {
+    e.target_pos.y
+}
+fn set_wing_flap(e: &mut Enemy, t: f32) {
+    e.target_pos.y = t;
+}
+
+/// The archer whose look and voice the skeleton uses (jesters: Cyan,
+/// mimics: the archer copied), or -1.
+fn mimic_archer(e: &Enemy) -> i32 {
+    if kind(e).jester {
+        6
+    } else {
+        e.target_speed.x as i32
+    }
+}
+fn set_mimic_archer(e: &mut Enemy, a: i32) {
+    e.target_speed.x = a as f32;
+}
+
+/// A cue from the skeleton's own set, or the copied archer's voice.
+fn sfx(w: &mut World, e: &Enemy, x: f32, own: &'static str, voice: CharSound) {
+    let a = mimic_archer(e);
+    if a >= 0 {
+        w.emit(crate::Event::CharSound {
+            sound: voice,
+            player: u8::MAX,
+            archer: a as u16,
+            x,
+        });
+    } else {
+        w.sound(own, x);
+    }
 }
 
 fn aim_angle(e: &Enemy) -> f32 {
@@ -58,13 +100,22 @@ pub fn enter(w: &mut World, _c: &Content, id: EntityId, e: &mut Enemy, s: u8) {
     match s {
         ALERT => {
             e.t[TX] = 0.0;
-            mimic(w, id, e);
+            if let Some(t) = e.target {
+                mimic(w, id, e, t);
+            }
         }
         DODGE => {
             e.t[FAIL_ADD] = max(0.1, e.t[FAIL_ADD] + 0.1);
             e.t[CAN_SHOOT] = 20.0;
             e.t[DODGE_CD] = if kind(e).jester { 30.0 } else { 90.0 };
-            w.sound("en_skelJump", w.core(id).pos.x);
+            // The archers' dodge cue, by direction.
+            let right = if e.speed.x.abs() <= 0.1 {
+                e.speed.y < 0.0
+            } else {
+                e.speed.x > 0.0
+            };
+            let name = if right { "char_dashR" } else { "char_dashL" };
+            w.sound(name, w.core(id).pos.x);
         }
         _ => {}
     }
@@ -86,30 +137,39 @@ pub fn mimicked(e: &Enemy) -> bool {
     e.has(F_MIMICKED)
 }
 
-fn mimic(w: &mut World, id: EntityId, e: &mut Enemy) {
-    if e.has(F_CAN_MIMIC) && !e.has(F_MIMICKED) {
+fn mimic(w: &mut World, id: EntityId, e: &mut Enemy, pid: EntityId) {
+    if e.has(F_CAN_MIMIC)
+        && let Some(p) = w.player(pid)
+    {
+        let archer = p.archer as i32;
         e.set(F_CAN_MIMIC, false);
         e.set(F_MIMICKED, true);
+        set_mimic_archer(e, archer);
         w.sound("en_shadowTransform", w.core(id).pos.x);
     }
 }
 
-/// Gravity, walking speed and facing (before the components run).
+/// Ground test, wings, gravity, walking speed and facing (before the
+/// components run, enemies.md §4.6 per-tick 1-2).
 pub fn pre_update(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
     let tm = w.time.time_mult;
     let k = kind(e);
+    relax_scale(w, e);
+    let grounded = on_ground(w, c, id);
+    e.set(F_ON_GROUND, grounded);
     if k.wings {
         e.t[GRAV] = approach(e.t[GRAV], 1.0, 0.05 * tm);
+        if wing_flap(e) > 0.0 {
+            set_wing_flap(e, wing_flap(e) - tm);
+        } else if e.n[GLIDE] > 0 {
+            e.n[GLIDE] -= 1;
+        }
     }
     if e.state == DODGE {
         return;
     }
-    if !on_ground(w, c, id) {
-        let gliding = k.wings && e.n[GLIDE] > 0;
-        if gliding {
-            e.n[GLIDE] -= 1;
-        }
-        let term = if gliding { 0.9 } else { 1.8 };
+    if !grounded {
+        let term = if e.n[GLIDE] > 0 { 0.9 } else { 1.8 };
         e.speed.y = min(e.speed.y + 0.15 * e.t[GRAV] * tm, term);
     }
     e.speed.x = approach(e.speed.x, e.t[TX], 0.1 * tm);
@@ -141,16 +201,14 @@ fn snapped_angle(w: &World, c: &Content, id: EntityId, target: EntityId) -> f32 
     snap(v.angle(), PI / 8.0)
 }
 
-/// `CanShoot`: no Solid 20 px along the snapped direction.
+/// `CanShoot`: its hitbox moved 20 px along the direction is clear.
 fn can_shoot_dir(w: &World, c: &Content, id: EntityId, angle: f32) -> bool {
-    let ws = w.world_size(c);
-    let p = wrap(w.core(id).pos + angle_to_vector(angle, 20.0), ws.w, ws.h);
-    !w.point_check(c, p, Tag::Solid)
+    !solid_at(w, c, id, angle_to_vector(angle, 20.0))
 }
 
 pub fn update(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> u8 {
     let tm = w.time.time_mult;
-    let next = match e.state {
+    match e.state {
         IDLE => {
             e.t[FAIL_ADD] = approach(e.t[FAIL_ADD], 0.0, 0.002 * tm);
             if let Some(t) = closest_on_side(w, c, id, e) {
@@ -166,13 +224,19 @@ pub fn update(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> u8 {
             DODGE
         }
         s => s,
-    };
-    // The reactions run after every state update that does not end in
-    // Dodge (also on a tick that changed state), unless flashing.
-    if next == DODGE || w.core(id).flash.flashing {
-        return next;
     }
-    reactions(w, c, id, e).unwrap_or(next)
+}
+
+/// After the whole base update (move, arrow collection and the state
+/// switch): unless dodging or flashing, the counters and the fake-out /
+/// arrow dodges (enemies.md §4.6 per-tick 3).
+pub fn post_update(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
+    if !e.alive() || e.state == DODGE || w.core(id).flash.flashing {
+        return;
+    }
+    if reactions(w, c, id, e) {
+        set_state(w, c, id, e, DODGE);
+    }
 }
 
 fn alert(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> u8 {
@@ -181,7 +245,7 @@ fn alert(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> u8 {
     };
     if !e.arrows.is_empty() && e.t[CAN_SHOOT] <= 0.0 {
         let a = snapped_angle(w, c, id, t);
-        if can_shoot_dir(w, c, id, a) && sees(w, c, id, e, t) {
+        if can_shoot_dir(w, c, id, a) {
             return SHOOT;
         }
     }
@@ -194,46 +258,58 @@ fn alert(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> u8 {
         e.t[TX] = -e.t[TX];
     }
     if e.t[DODGE_CD] <= 0.0 && (10.0..=40.0).contains(&ay) && ax <= 20.0 {
-        e.speed.x = -3.0 * sign(v.x);
+        // The dash replaces the whole velocity.
+        e.speed = Vec2::new(-3.0 * sign(v.x), 0.0);
         return DODGE;
     }
-    let ahead = solid_at(w, c, id, Vec2::new(e.facing as f32 * 2.0, 0.0));
-    if !on_ground(w, c, id) {
-        if kind(e).wings {
-            if e.n[FLAP_CD] > 0 {
-                e.n[FLAP_CD] -= 1;
-            } else if -ay >= 12.0 || ahead {
-                e.speed.y = -2.0;
-                e.t[GRAV] = 0.0;
-                e.n[FLAP_CD] = 30;
-                e.n[GLIDE] = if w.rng.next_max(2) == 0 { 30 } else { 60 };
-            }
+    if e.n[FLAP_CD] > 0 {
+        e.n[FLAP_CD] -= 1;
+    }
+    let ahead = solid_at(w, c, id, Vec2::new(e.facing as f32, 0.0));
+    let x = me.x;
+    if e.has(F_ON_GROUND) {
+        if e.n[JUMP_CD] > 0 {
+            e.n[JUMP_CD] -= 1;
+        } else if ay >= -12.0 || ahead {
+            sfx(w, e, x, "en_skelJump", CharSound::Jump);
+            e.speed.y = -3.5;
+            e.n[JUMP_CD] = 10;
         }
-    } else if e.n[JUMP_CD] > 0 {
-        e.n[JUMP_CD] -= 1;
-    } else if ay >= -12.0 || ahead {
-        e.speed.y = -3.5;
-        e.n[JUMP_CD] = 10;
+    } else if e.n[FLAP_CD] <= 0 && kind(e).wings && (ay <= -12.0 || ahead) {
+        e.speed.y = -2.0;
+        e.t[GRAV] = 0.0;
+        e.n[FLAP_CD] = 30;
+        e.n[GLIDE] = if w.rng.next_max(2) == 0 { 30 } else { 60 };
+        w.sound("pu_wingFlySkel", x);
+        set_wing_flap(e, anim_ticks(0.05, 5));
     }
     ALERT
 }
 
-/// Fake-out and arrow dodges (only outside Dodge, not flashing).
-fn reactions(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> Option<u8> {
+/// Counters, fake-out and arrow dodges; true when it starts a dodge
+/// (velocity, facing and target already set).
+fn reactions(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> bool {
     let tm = w.time.time_mult;
     let k = kind(e);
-    e.t[DODGE_CD] = max(0.0, e.t[DODGE_CD] - tm);
-    e.t[CAN_SHOOT] = max(0.0, e.t[CAN_SHOOT] - tm);
+    if e.t[DODGE_CD] > 0.0 {
+        e.t[DODGE_CD] -= tm;
+    }
+    if e.t[CAN_SHOOT] > 0.0 {
+        e.t[CAN_SHOOT] -= tm;
+    }
     let me = w.core(id).pos;
+    let eye = me + e.sight;
     let ws = w.world_size(c);
+    let ignore_jt = w.core(id).ignore_jump_thrus;
+    let shielded = e.has(F_SHIELD);
     e.t[FAKE_OUT] -= tm;
     if e.t[FAKE_OUT] <= 0.0 {
         e.t[FAKE_OUT] = 10.0;
-        if e.t[DODGE_CD] <= 0.0 && !e.has(F_SHIELD) {
-            for (pid, pp) in players(w, c, me) {
-                if !vision_cone(w, c, me, facing_angle(e.facing), 11.0 * PI / 18.0, pp)
-                    || wrap_dist_sq(me, pp, ws.w, ws.h) >= 10000.0
-                    || !can_see(w, c, me, pp, false)
+        if e.t[DODGE_CD] <= 0.0 && !shielded {
+            for (pid, pp) in players(w, c, eye) {
+                if !vision_cone(w, c, eye, facing_angle(e.facing), 11.0 * PI / 18.0, pp)
+                    || wrap_dist_sq(eye, pp, ws.w, ws.h) > 10000.0
+                    || !can_see(w, c, eye, pp, ignore_jt)
                 {
                     continue;
                 }
@@ -249,15 +325,18 @@ fn reactions(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> Option<
                     chance += 0.2;
                 }
                 if w.rng.chance(chance) {
-                    e.speed = shortest(w, c, me, pp).safe_normalize() * 3.0;
+                    // The plain (unwrapped) vector to the archer.
+                    e.set(F_AIMING, false);
                     e.target = Some(pid);
-                    return Some(DODGE);
+                    e.speed = (pp - me).safe_normalize() * 3.0;
+                    set_facing(e, e.speed.x);
+                    return true;
                 }
             }
         }
     }
-    if e.t[DODGE_CD] > 0.0 || e.has(F_SHIELD) {
-        return None;
+    if e.t[DODGE_CD] > 0.0 || shielded {
+        return false;
     }
     let arrows: Vec<EntityId> = w.tagged(Tag::Arrow).to_vec();
     for aid in arrows {
@@ -270,7 +349,8 @@ fn reactions(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> Option<
         let special = matches!(
             a.arrow_type,
             ArrowType::Bomb | ArrowType::SuperBomb | ArrowType::Trigger
-        ) && !a.collectible();
+        ) && !w.core(aid).marked_for_removal
+            && a.can_catch(id);
         if !(a.dangerous() || special) {
             continue;
         }
@@ -279,24 +359,24 @@ fn reactions(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> Option<
             continue;
         }
         if !k.jester {
-            let front = vision_cone(w, c, me, facing_angle(e.facing), 1.745, ap);
+            let front = vision_cone(w, c, eye, facing_angle(e.facing), 1.745_329_3, ap);
             let f = if front { 0.1 } else { 0.2 } + e.t[FAIL_ADD];
             if w.rng.chance(f) {
                 e.t[DODGE_CD] = 20.0;
-                return None;
+                return false;
             }
         }
         e.set(F_AIMING, false);
-        if a.player_index >= 0 {
-            mimic(w, id, e);
-        }
-        e.speed = shortest(w, c, me, ap).safe_normalize() * 3.0;
-        if let Some(o) = a.owner.filter(|&o| w.player(o).is_some()) {
+        let owner = a.owner.filter(|&o| w.player(o).is_some());
+        if let Some(o) = owner {
+            mimic(w, id, e, o);
             e.target = Some(o);
         }
-        return Some(DODGE);
+        e.speed = (ap - me).safe_normalize() * 3.0;
+        set_facing(e, e.speed.x);
+        return true;
     }
-    None
+    false
 }
 
 pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
@@ -319,12 +399,14 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
             }
             co(w, c, id, e, 0);
         }
-        (ALERT, 0) | (ALERT, 1) => {
+        // Step 0 (entry) and 2 (30 ticks after losing sight): give up
+        // unless it sees the target; step 1 checks every 30 ticks.
+        (ALERT, _) => {
             let sees_t = e.target.is_some_and(|t| sees(w, c, id, e, t));
             if sees_t {
-                e.co.yield_frames(30.0, 0);
-            } else if step == 0 {
                 e.co.yield_frames(30.0, 1);
+            } else if step == 1 {
+                e.co.yield_frames(30.0, 2);
             } else {
                 e.target = None;
                 set_state(w, c, id, e, IDLE);
@@ -332,7 +414,7 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
             }
         }
         (SHOOT, 0) => {
-            w.sound("en_skelDraw", x);
+            sfx(w, e, x, "en_skelDraw", CharSound::Aim);
             aim(w, c, id, e, true);
             e.co.yield_frames(10.0, 1);
         }
@@ -342,9 +424,12 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
                 end_shoot(w, c, id, e);
                 return;
             }
+            if !e.has(F_AIMING) {
+                sfx(w, e, x, "en_skelDraw", CharSound::Aim);
+            }
             e.set(F_AIMING, true);
             let t = e.target.unwrap();
-            if shortest(w, c, w.core(id).pos, w.core(t).pos).length_sq() > 900.0 {
+            if shortest(w, c, w.core(id).pos, w.core(t).pos).length_sq() >= 900.0 {
                 aim(w, c, id, e, true);
                 e.co.yield_frames(10.0, 2);
             } else {
@@ -365,8 +450,8 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
             }
         }
         (SHOOT, 4) => {
-            e.set(F_AIMING, false);
             aim(w, c, id, e, false);
+            e.set(F_AIMING, false);
             let Some(next) = e.arrows.next() else {
                 end_shoot(w, c, id, e);
                 return;
@@ -376,11 +461,11 @@ pub fn co(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, step: u16) {
                 end_shoot(w, c, id, e);
                 return;
             }
+            sfx(w, e, x, "en_skelShoot", CharSound::FireArrow);
             e.arrows.take();
-            let pos = w.core(id).pos + Vec2::new(0.0, 1.0);
+            let pos = w.core(id).pos;
             let a = shoot_arrow(w, id, next, pos, aim_angle(e));
             laser_start(w, a);
-            w.sound("en_skelShoot", x);
             e.co.yield_frames(5.0, 1);
         }
         (SHOOT, _) => end_shoot(w, c, id, e),
@@ -434,14 +519,15 @@ fn jester_warp(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> bool 
     if pts.len() < 2 {
         return false;
     }
+    // Points within 20 px (plain distance) of the jester go last.
     pts.sort_by(|a, b| {
-        let na = wrap_dist_sq(*a, me, ws.w, ws.h) <= 400.0;
-        let nb = wrap_dist_sq(*b, me, ws.w, ws.h) <= 400.0;
+        let na = (*a - me).length_sq() <= 400.0;
+        let nb = (*b - me).length_sq() <= 400.0;
         na.cmp(&nb)
             .then(wrap_dist_sq(*a, tp, ws.w, ws.h).total_cmp(&wrap_dist_sq(*b, tp, ws.w, ws.h)))
     });
+    w.sound("sfx_cyanWarp", me.x);
     w.core_mut(id).pos = pts[1];
-    w.sound("sfx_cyanWarp", pts[1].x);
     true
 }
 
@@ -451,6 +537,27 @@ pub fn collide_h(_w: &mut World, _c: &Content, _id: EntityId, e: &mut Enemy) {
         e.t[TX] = -e.t[TX];
     }
     e.speed.x = 0.0;
+}
+
+/// Landing (or a ceiling): stop, land cue, body squash (relaxed by the
+/// renderer at 0.04/tick).
+pub fn collide_v(w: &mut World, _c: &Content, id: EntityId, e: &mut Enemy) {
+    e.speed.y = 0.0;
+    let x = w.core(id).pos.x;
+    let own = if e.has(F_CAN_MIMIC) {
+        "en_shadowLand"
+    } else {
+        "en_skelLand"
+    };
+    sfx(w, e, x, own, CharSound::Land);
+    e.scale = Vec2::new(1.2, 0.8);
+}
+
+/// Body squash relaxing toward 1 (the humanoid renderer's 0.04/tick).
+pub fn relax_scale(w: &World, e: &mut Enemy) {
+    let tm = w.time.time_mult;
+    e.scale.x = approach(e.scale.x, 1.0, 0.04 * tm);
+    e.scale.y = approach(e.scale.y, 1.0, 0.04 * tm);
 }
 
 pub fn break_shield(w: &mut World, id: EntityId, e: &mut Enemy, force: Vec2) {
@@ -474,7 +581,7 @@ pub fn try_catch(
     if e.state != DODGE
         || e.has(F_SHIELD)
         || e.arrows.len() >= 3
-        || a.owner == Some(id)
+        || a.cannot_hit == Some(id)
         || !a.can_catch(id)
     {
         return false;
@@ -593,6 +700,10 @@ pub fn die(w: &mut World, _c: &Content, id: EntityId, e: &mut Enemy) {
             arrow::drop(w, a, &mut ar, -(e.facing as f32));
             w.put_kind(a, Kind::Arrow(ar));
         }
+        w.sound("sfx_dropDrawn", pos.x);
+    }
+    if kind(e).jester {
+        sfx(w, e, w.core(id).pos.x, "", CharSound::Die);
     }
     remove_now(w, id, e);
 }

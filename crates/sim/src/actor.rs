@@ -233,6 +233,9 @@ pub fn is_riding_solid(w: &World, c: &Content, id: EntityId, solid: EntityId) ->
         Some(Kind::Player(p)) => crate::player::is_riding_solid(w, c, id, p, solid),
         Some(Kind::Arrow(a)) => crate::arrow::is_riding_solid(w, c, id, a, solid),
         Some(Kind::Corpse(cp)) => crate::corpse::is_riding_solid(w, c, id, cp, solid),
+        Some(Kind::Enemy(e)) if e.ty == crate::enemies::EnemyType::Worm => {
+            crate::enemies::worm::is_riding_solid(w, c, id, e, solid)
+        }
         Some(_) => base_riding_solid(w, c, id, solid),
         None => false,
     }

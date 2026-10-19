@@ -187,7 +187,8 @@ impl EnemyType {
         }
     }
 
-    /// Flyers ignore jump-thrus.
+    /// `IgnoreJumpThrus` (§1.1): bats, ghosts and the flaming skull only;
+    /// the other floaters land on jump-thrus like any actor.
     fn flyer(self) -> bool {
         use EnemyType::*;
         matches!(
@@ -200,14 +201,6 @@ impl EnemyType {
                 | Elemental
                 | GreenElemental
                 | FlamingSkull
-                | KingReaper
-                | PlayerGhost
-                | Exploder
-                | TechnoMage
-                | EvilCrystal
-                | BlueCrystal
-                | BoltCrystal
-                | PrismCrystal
         )
     }
 
@@ -561,6 +554,7 @@ fn leave(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, s: u8) {
         Skeleton(_) => skeleton::leave(w, c, id, e, s),
         Mole => mole::leave(w, c, id, e, s),
         TechnoMage => techno::leave(w, c, id, e, s),
+        Exploder => exploder::leave(w, c, id, e, s),
         _ => {}
     }
 }
@@ -596,12 +590,20 @@ fn update_inner(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
     if matches!(e.ty, Mole) {
         mole::pre_update(w, c, id, e);
     }
-    // 2. components: sines, coroutine; then wrap and flash.
-    e.sine.update(tm);
-    e.sine2.update(tm);
+    if matches!(e.ty, Cultist | ScytheCultist | BossCultist) {
+        cultist::pre_update(w, c, id, e);
+    }
+    match e.ty {
+        EvilCrystal | BlueCrystal | BoltCrystal | PrismCrystal => crystal::pre_update(w, e),
+        Worm => worm::pre_update(w, e),
+        _ => {}
+    }
+    // 2. components: the coroutine (added first), sines; then wrap and flash.
     if let Some(step) = e.co.update(tm) {
         co_step(w, c, id, e, step);
     }
+    e.sine.update(tm);
+    e.sine2.update(tm);
     actor::enforce_screen_wrap(w, c, id);
     w.core_mut(id).flash.update(tm);
     // 3. state update.
@@ -684,8 +686,14 @@ fn post_update(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
     use EnemyType::*;
     match e.ty {
         TechnoMage => techno::post_update(w, c, id, e),
+        FlamingSkull => skull::post_update(w, e),
+        Exploder => exploder::post_update(w, e),
         Slime | RedSlime | BlueSlime => slime::post_update(w, c, id, e),
+        Bat | BombBat | SuperBombBat | Crow => bat::post_update(w, c, id, e),
+        Ghost | GreenGhost | Elemental | GreenElemental => ghost::post_update(w, c, id, e),
+        Cultist | ScytheCultist | BossCultist => cultist::post_update(w, c, id, e),
         PlayerGhost => player_ghost::ghost_collisions(w, c, id, e),
+        Skeleton(_) => skeleton::post_update(w, c, id, e),
         _ => {}
     }
 }
@@ -713,7 +721,9 @@ fn collide_v(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy, s: EntityI
         Slime | RedSlime | BlueSlime => slime::collide_v(w, c, id, e),
         Bat | BombBat | SuperBombBat | Crow => bat::collide_v(w, c, id, e),
         Birdman | DarkBirdman => birdman::collide_v(e),
+        Skeleton(_) => skeleton::collide_v(w, c, id, e),
         Mole => mole::collide_v(w, c, id, e),
+        Cultist | ScytheCultist | BossCultist => cultist::collide_v(w, c, id, e),
         Worm => worm::collide(e, false),
         FlamingSkull => skull::collide_v(w, id, e),
         PlayerGhost => player_ghost::collide(w, c, id, e, false),
@@ -746,8 +756,9 @@ pub fn hurt(
         skeleton::break_shield(w, id, e, force);
         return;
     }
+    // Flashing only stops arrows (§1.5), not a direct hurt.
     e.speed = force;
-    if e.alive() && !w.core(id).flash.flashing {
+    if e.alive() {
         e.health -= damage;
         if e.health <= 0 {
             die(w, c, id, e, killer);
@@ -808,7 +819,9 @@ pub fn death_sound(e: &Enemy) -> Option<&'static str> {
         Elemental | GreenElemental => "en_fireElementalDeath",
         Cultist | ScytheCultist | BossCultist => "en_cultDeath",
         Birdman | DarkBirdman => "en_birdmanDeath",
-        Skeleton(k) if k.mimic || k.jester => "en_shadowDeath",
+        // Jesters use the Cyan archer's death cue (skeleton::die).
+        Skeleton(k) if k.jester => return None,
+        Skeleton(k) if k.mimic => "en_shadowDeath",
         Skeleton(_) => "en_skelDeath",
         Mole => "en_moleDeath",
         Worm => "en_wormDeath",
@@ -880,7 +893,7 @@ fn arrow_hit(
         KingReaper => return reaper::arrow_hit(w, c, id, e, aid, a),
         Mole => return mole::arrow_hit(w, c, id, e, aid, a),
         TechnoMage if !e.alive() => {
-            arrow::enter_fall_mode(w, aid, a, true, false, false);
+            arrow::enter_fall_mode(w, aid, a, true, false, true);
             return true;
         }
         // Ghosts set flammable arrows alight, then the base rule runs.
@@ -894,13 +907,21 @@ fn arrow_hit(
                 hurt(w, c, id, e, a.speed, 1, a.player_index);
             }
             crate::arrows::ignite(a);
-            arrow::enter_fall_mode(w, aid, a, true, false, false);
+            arrow::enter_fall_mode(w, aid, a, true, false, true);
             return true;
         }
         PlayerGhost if !player_ghost::can_be_hit(w, id, e, aid, a) => return false,
         _ => {}
     }
     if w.core(id).flash.flashing {
+        // Crystals and exploders drop the arrow even then (§4.9, §4.10).
+        if matches!(
+            e.ty,
+            EvilCrystal | BlueCrystal | BoltCrystal | PrismCrystal | Exploder
+        ) {
+            arrow::enter_fall_mode(w, aid, a, true, false, e.ty != Exploder);
+            return true;
+        }
         return false;
     }
     if let Skeleton(_) = e.ty
@@ -922,7 +943,13 @@ fn arrow_hit(
                 | TechnoMage
         );
     if falls {
-        arrow::enter_fall_mode(w, aid, a, true, false, false);
+        // Crystals and techno mages drop it with the collide sound,
+        // exploders silently (enemies.md §4.9, §4.10, §4.12).
+        let sound = matches!(
+            e.ty,
+            EvilCrystal | BlueCrystal | BoltCrystal | PrismCrystal | TechnoMage
+        );
+        arrow::enter_fall_mode(w, aid, a, true, false, sound && !had_shield);
     }
     true
 }
@@ -966,31 +993,56 @@ pub fn on_explode(w: &mut World, c: &Content, id: EntityId, normal: Vec2, owner:
     w.put_kind(id, Kind::Enemy(e));
 }
 
-/// Squished by a moving solid (§1.3).
+/// Squished by a moving solid (§1.3): pop out 6 px (the pusher counts as
+/// solid) and slide back flush against it, else die without `Die`.
 pub fn on_squish(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
+    let mover = w.mover;
+    let set_mover = |w: &mut World, on: bool| {
+        if let Some(m) = mover {
+            w.core_mut(m).collidable = on;
+        }
+    };
+    set_mover(w, true);
     let p = w.core(id).pos;
-    for d in [
-        (-6.0, 0.0),
-        (6.0, 0.0),
-        (0.0, -6.0),
-        (0.0, 6.0),
-        (-6.0, -6.0),
-        (6.0, -6.0),
-        (-6.0, 6.0),
-        (6.0, 6.0),
-    ] {
-        let at = p + Vec2::new(d.0, d.1);
-        if !w.check_at(c, id, at, Tag::Solid) {
-            w.core_mut(id).pos = at;
-            return;
+    for i in -1..=1 {
+        for j in -1..=1 {
+            if i == 0 && j == 0 {
+                continue;
+            }
+            let at = p + Vec2::new(6.0 * i as f32, 6.0 * j as f32);
+            if !w.check_at(c, id, at, Tag::Solid) {
+                w.core_mut(id).pos = at;
+                if i != 0 {
+                    actor::move_exact_h(w, c, id, -6 * i, actor::ExactCollide::None);
+                }
+                if j != 0 {
+                    actor::move_exact_v(w, c, id, -6 * j, actor::ExactCollide::None);
+                }
+                set_mover(w, false);
+                return;
+            }
         }
     }
-    let killer = w.mover.map(|m| w.core(m).squisher_index).unwrap_or(-1);
-    if killer >= 0 {
-        crate::coop::register_enemy_kill(w, p + e.sight, killer, e.bounty);
-        e.health = -1;
+    let killer = mover.map(|m| w.core(m).squisher_index).unwrap_or(-1);
+    // A player ghost dies (credited to the pusher's owner) instead.
+    if e.ty == EnemyType::PlayerGhost {
+        if e.alive() {
+            die(w, c, id, e, killer);
+        }
+        set_mover(w, false);
+        return;
     }
+    let at = p + e.sight;
+    if e.alive() && killer >= 0 {
+        crate::coop::register_enemy_kill(w, at, killer, e.bounty);
+    }
+    // Removed without dying: Quest still counts it (killer -1, no bounty).
+    if e.health >= 0 {
+        crate::quest::register_kill(w, at, -1, 0);
+    }
+    e.health = -1;
     remove_now(w, id, e);
+    set_mover(w, false);
 }
 
 // ------------------------------------------------------------ players
@@ -1046,8 +1098,7 @@ fn player_collide(
         let enemy_bottom = e.prev_pos.y + col.y + col.h;
         let player_top = pc.top() - p.speed.y;
         if wrap_diff_x(player_top, enemy_bottom, hh) <= 5.0 {
-            let away = (ec.pos - pc.pos).safe_normalize_len(2.0);
-            e.speed = away;
+            e.speed = (ec.pos + e.sight - pc.pos).safe_normalize_len(2.0);
             player::hurt_bounced_on_pub(w, c, pid, p, -1);
             return;
         }
@@ -1121,22 +1172,30 @@ pub fn plain_touch(
                 e.arrows.add(t);
             }
             if e.collide_sound <= 0.0 {
-                enemy_char_sound(w, crate::events::CharSound::ArrowSteal, from.x);
+                let x = w.core(id).pos.x;
+                enemy_char_sound(w, crate::events::CharSound::ArrowSteal, x);
             }
         } else if p.arrows.is_empty()
             && let Some(t) = e.arrows.take()
         {
+            // `Player.StealArrow(enemy)`.
             p.arrows.add_arrows(&[t]);
+            crate::versus::stat(w, p.index, |s| s.arrows_stolen += 1);
+            w.char_sound(
+                crate::events::CharSound::ArrowSteal,
+                p.index,
+                p.archer,
+                from.x,
+            );
         } else if e.collide_sound <= 0.0 {
             w.sound("sfx_collide", from.x);
         }
     } else if e.collide_sound <= 0.0 {
-        // The bump of a plain touch (enemies.md 1.5).
+        // The bump of a plain touch (enemies.md 1.4).
         w.sound("sfx_collide", from.x);
     }
-    if e.collide_sound <= 0.0 {
-        e.collide_sound = 10.0;
-    }
+    // Re-armed by every touch: one bump per contact (§1.4).
+    e.collide_sound = 10.0;
 }
 
 /// Hurt the touching player (`DeathCause::Enemy`), pushed away from the enemy.
@@ -1153,11 +1212,9 @@ pub fn detectable(w: &World, pid: EntityId, p: &Player, from: Vec2, c: &Content)
     if core.flash.flashing || p.dead {
         return false;
     }
-    let ws = w.world_size(c);
-    !p.invisible
-        || p.has_shield
-        || p.invis_opacity > 0.6
-        || wrap_dist_sq(from, core.pos, ws.w, ws.h) <= 900.0
+    // The 30 px reveal uses the plain, unwrapped distance (§1.8).
+    let _ = c;
+    !p.invisible || p.has_shield || p.invis_opacity > 0.6 || (from - core.pos).length_sq() <= 900.0
 }
 
 /// Living, detectable players (id, position).
@@ -1230,9 +1287,7 @@ pub fn horizontal_player(w: &World, c: &Content, from: Vec2, facing: i8) -> Opti
     for _ in 0..64 {
         p.x += 5.0 * facing as f32;
         let wp = wrap(p, ws.w, ws.h);
-        if w.point_check(c, wp, Tag::Solid) {
-            return None;
-        }
+        // Players first, then the wall test (§1.8).
         for dy in [0.0, 10.0, -10.0, -20.0] {
             let q = wrap(Vec2::new(wp.x, wp.y + dy), ws.w, ws.h);
             if let Some(id) = w.players().find(|&id| {
@@ -1251,6 +1306,9 @@ pub fn horizontal_player(w: &World, c: &Content, from: Vec2, facing: i8) -> Opti
             }) {
                 return Some(id);
             }
+        }
+        if w.point_check(c, wp, Tag::Solid) {
+            return None;
         }
     }
     None
@@ -1499,9 +1557,11 @@ pub fn on_shock(w: &mut World, c: &Content, me: &crate::collide::Placed, r_sq: f
 
 /// `OnSqueakyBounce` (toy arrows, arrows.md §9.8): `Speed = 4 * v`.
 /// `ExplosionCheckOffsets` (enemies.md §1.5), relative to the position,
-/// from the enemy's collider; empty = the position itself.
-pub fn explosion_offsets(e: &Enemy, hb: crate::collide::Hitbox, out: &mut Vec<Vec2>) {
+/// fixed at construction from the initial main collider (not `_hb`, the
+/// current one); empty = the position itself.
+pub fn explosion_offsets(e: &Enemy, _hb: crate::collide::Hitbox, out: &mut Vec<Vec2>) {
     use EnemyType::*;
+    let hb = e.ty.colliders().0;
     let (cx, cy) = (hb.x + hb.w / 2.0, hb.y + hb.h / 2.0);
     match e.ty {
         Slime | RedSlime | BlueSlime => out.push(Vec2::new(0.0, -5.0)),

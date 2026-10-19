@@ -9,6 +9,8 @@ pub const WALK: u8 = 1;
 pub const DEAD: u8 = 2;
 const MULT: usize = 0;
 const DEAD_T: usize = 1;
+/// Where the body sprite turns to.
+const TARGET_ANGLE: usize = 2;
 
 /// Rotate by 90 degrees * `f` (y down: +1 = clockwise).
 fn rot(v: Vec2, f: i8) -> Vec2 {
@@ -30,22 +32,56 @@ pub fn init(w: &mut World, e: &mut Enemy) {
     e.t[MULT] = 1.0;
 }
 
+/// `targetAngle` from the surface while walking, else upright.
+fn update_target_angle(e: &mut Enemy) {
+    e.t[TARGET_ANGLE] = if e.state == WALK {
+        stick(e).angle() - PI / 2.0
+    } else {
+        0.0
+    };
+}
+
+/// Before the base update: the body turns toward `targetAngle`.
+pub fn pre_update(w: &World, e: &mut Enemy) {
+    let tm = w.time.time_mult;
+    e.rotation = crate::math::angle_approach(e.rotation, e.t[TARGET_ANGLE], PI / 18.0 * tm);
+}
+
+/// `IsRiding(Solid)`: a walking worm rides what it clings to.
+pub fn is_riding_solid(w: &World, c: &Content, id: EntityId, e: &Enemy, solid: EntityId) -> bool {
+    let core = w.core(id);
+    e.state == WALK
+        && w.check(
+            c,
+            &Placed {
+                pos: core.pos + stick(e),
+                collider: core.collider,
+            },
+            solid,
+        )
+}
+
 pub fn enter(_w: &mut World, _c: &Content, _id: EntityId, e: &mut Enemy, s: u8) {
     match s {
         WALK => {
             e.target_pos = Vec2::new(0.0, 1.0);
             e.target_speed = Vec2::new(e.facing as f32, 0.0);
+            e.t[MULT] = 1.0;
         }
-        DEAD => e.t[DEAD_T] = 0.0,
+        DEAD => {
+            e.t[DEAD_T] = 0.0;
+            e.speed = e.speed.safe_normalize_len(0.4);
+        }
         _ => {}
     }
+    update_target_angle(e);
 }
 
 pub fn update(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> u8 {
     let tm = w.time.time_mult;
     match e.state {
         FALL => {
-            e.speed.y = approach(e.speed.y, 1.8, 0.15 * tm);
+            e.speed.y = min(e.speed.y + 0.15 * tm, 1.8);
             e.speed.x = approach(e.speed.x, 0.0, 0.1 * tm);
             FALL
         }
@@ -71,14 +107,12 @@ pub fn update(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) -> u8 {
                 }
                 e.target_pos = v;
                 e.target_speed = rot(e.target_speed, e.facing);
+                e.t[TARGET_ANGLE] += PI / 2.0 * e.facing as f32;
             }
+            // Each axis on its own.
             let target = e.target_speed * (0.4 * e.t[MULT]);
-            approach_speed(e, target, 0.1 * tm);
-            e.rotation = crate::math::angle_approach(
-                e.rotation,
-                stick(e).angle() - PI / 2.0,
-                PI / 18.0 * tm,
-            );
+            e.speed.x = approach(e.speed.x, target.x, 0.1 * tm);
+            e.speed.y = approach(e.speed.y, target.y, 0.1 * tm);
             WALK
         }
         _ => {
@@ -138,6 +172,7 @@ pub fn collide(e: &mut Enemy, horizontal: bool) {
         WALK => {
             e.target_pos = rot(e.target_pos, -e.facing);
             e.target_speed = rot(e.target_speed, -e.facing);
+            update_target_angle(e);
         }
         _ => {}
     }
@@ -151,7 +186,5 @@ impl Enemy {
 
 pub fn die(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
     untag(w, id, e);
-    e.speed = e.speed.safe_normalize_len(0.4);
     set_state(w, c, id, e, DEAD);
-    let _ = min(0.0, 0.0);
 }

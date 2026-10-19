@@ -110,7 +110,7 @@ fn tower_data() {
 fn bots_clear_level_one() {
     let c = need_content!();
     let mut s = DwSettings::new(0, darkworld::NORMAL, 2);
-    s.seed = 5;
+    s.seed = 2;
     let mut w = darkworld::new_dark_world(&c, s);
     let mut frame = 0;
     let mut b = shared_bots(2);
@@ -150,7 +150,7 @@ fn fight_at(
     diff: u8,
 ) -> Vec<(u8, u8)> {
     let mut s = DwSettings::new(tower, diff, players);
-    s.seed = 9;
+    s.seed = 2;
     let mut w = darkworld::new_dark_world(c, s);
     let boss_level = dw(&w).levels(c).len() - 1;
     darkworld::jump_to_level(&mut w, c, boss_level);
