@@ -54,6 +54,75 @@ After the current priorities, without changing their order.
   - Audio and keyboard: Cmd-key shortcuts (Cmd+Q, Cmd+F) and the audio
     device switching on macOS.
 
+## New game modes
+
+Ten modes of our own that the original does not have (Jan, 2026-10-19).
+They are new designs, not reimplementations, so each gets a design note in
+`docs/modes/` (public, our own text) instead of a spec. After the current
+priorities and macOS, without changing their order. Every mode must:
+
+- run entirely in `tfp-sim`, deterministic and rollback-safe (seeded PRNG,
+  no new state outside `World`), so it works online and mixed local+online;
+- work for 2-12 archers on the normal and wide towers, with bots, and with
+  the existing match settings (length, variants, teams where it makes sense);
+- show everything on the one shared screen (no secret per-player
+  information);
+- get a menu entry, a short in-game explanation card, results/awards and a
+  headless proof run (`scripts/dev/`), like the existing modes.
+
+The modes, roughly in the order they should be built (the first ones reuse
+the most existing code):
+
+1. **Capture the Flag** (teams): each team has a flag on a pedestal in its
+   half of the tower. Grab the enemy flag and bring it to your own pedestal
+   while yours is at home. A carrier who dies drops the flag; touching your
+   own dropped flag returns it. Carriers can shoot but not dodge-catch.
+   Needs team bases on the versus towers (a small per-tower table).
+2. **Siege** (co-op wave defense): defend a crystal in the middle of the
+   tower against waves of Quest enemies that go for the crystal, not the
+   archers. Between waves the team spends gems from kills on barricades,
+   arrow racks or a turret at fixed build spots. Lose when the crystal
+   breaks; score is waves survived. Different from Quest because the
+   objective, not the archers, is under attack.
+3. **King of the Hill**: a glowing zone sits on one platform and moves to
+   another every 20 s. Standing in it alone scores a point per second;
+   contested zones score nothing. First to the target score wins. Archers
+   respawn after a short delay.
+4. **Hot Potato**: one archer carries a lit bomb with a hidden-length fuse
+   (5-15 s, from the seeded PRNG; a ticking sound speeds up). Stomping or
+   hitting another archer with an arrow passes it on. When it goes off, the
+   carrier (and anyone close) is out for the round. Last archer standing
+   wins the round.
+5. **Juggernaut**: one archer is the Juggernaut: shield that regrows, wings,
+   twice the arrows, bigger hitbox. Only the Juggernaut scores (per kill);
+   whoever kills the Juggernaut becomes the next one. First to the target
+   score wins.
+6. **Infection**: one random archer starts infected (a dark tint and
+   unlimited arrows, no shield). Anyone an infected archer kills respawns
+   infected. Survivors win the round if one is still alive when the timer
+   runs out; the infected win if they get everyone. Points to the survivors,
+   and to the first infected for every conversion.
+7. **Gem Rush**: chests and kills drop gems; each archer carries what they
+   pick up and loses all of it on death, spilled for others to grab. Gems
+   only count once banked at an altar that moves between rounds. Most banked
+   gems at the end of the timer wins.
+8. **Arms Race**: everyone starts with normal arrows. Each kill moves you on
+   to the next arrow type (bomb, laser, drill, bramble, trigger, prism, ...,
+   the last one a single plain arrow). The first archer to score a kill with
+   the last step wins the match. Being stomped sends you one step back.
+9. **Orb Ball**: a heavy ball (the Dark World orb physics) and a goal at each
+   side of the tower. Arrows, stomps and explosions knock the ball; no
+   archer can be killed, hits only stun. First team to the target goals
+   wins. Needs goal tiles on a few versus towers or a set of new arenas.
+10. **Target Race**: Trials for several archers at once. Every archer has
+    their own coloured targets spread over the same tower; your arrows
+    break only yours, and hitting another archer only knocks them back.
+    First to break all their targets wins the round. Uses the Trials
+    targets and timing.
+
+Open for each mode: the exact numbers (scores, timers, wave sizes) are set
+by bot playtests and then real ones, as for 9-12 player Versus.
+
 ## Open questions
 
 - **9-12 player Last Man Standing**: the miasma starts at 25 s as in the
