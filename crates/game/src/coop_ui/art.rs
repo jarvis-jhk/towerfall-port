@@ -734,7 +734,11 @@ fn enemy(b: &mut B, w: &World, cx: &Ctx, anims: &mut Anims, id: EntityId, e: &En
         }
         Skeleton(k) => skeleton(b, w, cx, anims, id, e, k),
         Mole => {
+            // JumpDown: after wait(10) a 12-tick CubeInOut turn to pi, and
+            // the dig animation after a further wait(6).
+            let t = anims.t(id, 4, e.state as u64, frame);
             let anim = match e.state {
+                mole::JUMP_DOWN if t >= 18.0 => "dig",
                 mole::JUMP_DOWN => "jump",
                 mole::DRILL => "dig",
                 mole::ROLL => "roll",
@@ -748,12 +752,10 @@ fn enemy(b: &mut B, w: &World, cx: &Ctx, anims: &mut Anims, id: EntityId, e: &En
                     }
                     return;
                 }
-                _ if e.speed.y.abs() > 0.01 => "jump",
+                _ if !mole::on_ground(e) => "jump",
                 _ => "idle",
             };
-            // JumpDown: after wait(10) a 12-tick CubeInOut turn by pi.
-            let t = anims.t(id, 4, e.state as u64, frame);
-            let rot = if e.state == mole::JUMP_DOWN {
+            let rot = if e.state == mole::JUMP_DOWN && t >= 11.0 {
                 let x = ((t - 11.0) / 12.0).clamp(0.0, 1.0);
                 let k = if x < 0.5 {
                     4.0 * x * x * x
@@ -761,7 +763,7 @@ fn enemy(b: &mut B, w: &World, cx: &Ctx, anims: &mut Anims, id: EntityId, e: &En
                     let u = 2.0 * x - 2.0;
                     0.5 * u * u * u + 1.0
                 };
-                e.rotation + PI * k
+                PI * k
             } else {
                 e.rotation
             };

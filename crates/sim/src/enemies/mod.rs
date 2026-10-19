@@ -593,6 +593,9 @@ fn update_inner(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
         skeleton::pre_update(w, c, id, e);
         skeleton::trigger_update(w, c, id, e);
     }
+    if matches!(e.ty, Mole) {
+        mole::pre_update(w, c, id, e);
+    }
     // 2. components: sines, coroutine; then wrap and flash.
     e.sine.update(tm);
     e.sine2.update(tm);
@@ -613,7 +616,7 @@ fn update_inner(w: &mut World, c: &Content, id: EntityId, e: &mut Enemy) {
         return;
     }
     // 4. move.
-    if e.has(F_NAIVE_MOVE) || (matches!(e.ty, Mole) && mole::drilling(e)) {
+    if e.has(F_NAIVE_MOVE) {
         let p = w.core(id).pos;
         w.core_mut(id).pos = p + e.speed * tm;
     } else {
@@ -875,10 +878,7 @@ fn arrow_hit(
     match e.ty {
         Bat | BombBat | SuperBombBat | Crow => return bat::arrow_hit(w, c, id, e, aid, a),
         KingReaper => return reaper::arrow_hit(w, c, id, e, aid, a),
-        Mole if mole::rolling(e) => {
-            arrow::enter_fall_mode(w, aid, a, true, false, false);
-            return true;
-        }
+        Mole => return mole::arrow_hit(w, c, id, e, aid, a),
         TechnoMage if !e.alive() => {
             arrow::enter_fall_mode(w, aid, a, true, false, false);
             return true;
@@ -913,7 +913,7 @@ fn arrow_hit(
     let falls = had_shield
         || matches!(
             e.ty,
-            Mole | EvilCrystal
+            EvilCrystal
                 | BlueCrystal
                 | BoltCrystal
                 | PrismCrystal

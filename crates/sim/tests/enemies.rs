@@ -280,6 +280,43 @@ fn mole_rolls() {
     assert!(until(&mut s, 200, |s| player_dead(s, 0)).is_some());
 }
 
+/// An idle mole walking into a wall turns around (`OnCollideH` in Idle) and
+/// so finds the archer behind it instead of pressing into the corner.
+#[test]
+fn mole_turns_at_walls() {
+    let mut s = Sim::new(&ARENA, &[Vec2::new(100.0, FLOOR_Y)]);
+    let id = spawn(&mut s, "Mole", Vec2::new(24.0, 211.0), -1);
+    assert!(
+        until(&mut s, 300, |s| enemy(s, id).is_some_and(|e| e.state
+            == enemies::mole::ROLL
+            && e.facing == 1))
+        .is_some(),
+        "stuck facing the wall"
+    );
+}
+
+/// A mole drills through the block to the archer below and breaks out on
+/// whole pixels, free of the block.
+#[test]
+fn mole_drills_through() {
+    let mut s = Sim::new(&ARENA, &[Vec2::new(125.0, FLOOR_Y)]);
+    let id = spawn(&mut s, "Mole", Vec2::new(125.0, 121.0), 1);
+    assert!(
+        until(&mut s, 300, |s| enemy(s, id)
+            .is_some_and(|e| e.state == enemies::mole::DRILL))
+        .is_some()
+    );
+    assert!(
+        until(&mut s, 300, |s| enemy(s, id)
+            .is_some_and(|e| e.state == enemies::mole::IDLE))
+        .is_some()
+    );
+    let p = s.w.core(id).pos;
+    assert_eq!(p, Vec2::new(p.x.round(), p.y.round()), "whole pixels");
+    assert!(!s.w.check_at(&s.c, id, p, Tag::Solid), "out of the block");
+    assert!(p.y > 140.0, "below the block: {p:?}");
+}
+
 /// The flaming skull flies diagonally at speed 1 and bounces off walls.
 #[test]
 fn flaming_skull_bounces() {
