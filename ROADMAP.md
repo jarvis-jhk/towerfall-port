@@ -123,6 +123,49 @@ the most existing code):
 Open for each mode: the exact numbers (scores, timers, wave sizes) are set
 by bot playtests and then real ones, as for 9-12 player Versus.
 
+## Big arenas
+
+Optional bigger levels where the whole game is shown smaller (Jan,
+2026-10-19): more room for 9-12 archers, but selectable in every mode and
+at every player count. After the current priorities, macOS and the new
+modes, without changing their order.
+
+- **Setting**: an arena size option (Normal / Wide / Big, maybe Huge) in
+  the versus settings and the co-op menus; Normal keeps 320×240, Wide the
+  existing 420×240, Big about 1.5× the area in each direction (e.g. 480×360
+  or 640×360), Huge about 2×. The default picks by player count (Normal up
+  to 4, Wide 5-8 as today, Big suggested at 9-12) but any size can be chosen
+  for any count. Part of the match settings, so it is synced online and in
+  replays.
+- **Scaling down**: the sim keeps its pixel units and physics untouched;
+  the arena is simply larger in world pixels and the renderer fits the
+  bigger canvas into the window, so everything (archers, arrows, tiles,
+  HUD in the arena) looks smaller. Pixel-perfect presentation keeps
+  working (integer scale where the window allows, otherwise the existing
+  fractional fit). Screen-space HUD (scores, P-tags, menus) stays at its
+  current size so it remains readable.
+- **Levels**: the original has no levels at these sizes, so they come from
+  - generated variants of the existing towers: tile the 320×240 level
+    layout (2×1, 2×2, mirrored or with a seam section) into one bigger
+    room, with spawns, chest spots and treasure tables extended
+    accordingly, using the player's own level files at run time;
+  - hand-made arenas of our own (our own Ogmo-compatible format, no game
+    data in git) for a few themes, later.
+  Screen wrapping, miasma, moving platforms, lava and the Dark World orb
+  must work at any size.
+- **Modes**: Versus (all modes and the 89 variants), the new modes, Quest
+  and Dark World (enemy spawn portals and wave sizes scaled with the area)
+  and Trials (targets spread over the bigger room).
+- **Gameplay tuning**: more archers on a bigger map changes pacing: arrow
+  pickup density, chest counts and the 9-12 miasma timing (see Open
+  questions) are scaled with the area; numbers set by bot playtests first.
+- **Readability**: at 12 archers on a huge arena on a TV, archers must stay
+  recognisable: optional thicker player outlines/indicators and a
+  slightly larger arrow-count display above each archer.
+- **Proof**: headless screenshots and a bot match per size and mode in
+  `scripts/dev/`, frame time at 12 bots on the largest size, rollback
+  determinism tests with the size in the match settings.
+
 ## Open questions
 
 - **9-12 player Last Man Standing**: the miasma starts at 25 s as in the
