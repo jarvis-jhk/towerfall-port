@@ -93,6 +93,8 @@ Living plan. Update when a step finishes.
       item's colour-cycling bubble and the orb border; shield gain reveals
       from the top (`Drawable::clip_h`); team colour on archer shields.
       Specs: arrows.md §14c, pickups.md §2.2b and §6.3, player.md §16.1.
+      v0.2.0 prerelease (2026-10-19): CI-built (glibc 2.35, bundled SDL2),
+      with the visual fidelity pass.
 
 ## Final verification (2026-10-17, this tree)
 
