@@ -22,8 +22,12 @@ the work still ahead.
 4. **Real hardware**: the desktop check (`docs/desktop-check.md`) with real
    controllers, windowed vsync pacing, fullscreen and audio; a real Windows
    machine.
-5. **Crash reports**: panics reported to an issue automatically (opt-in, no
-   personal data), so failures on players' machines are not lost.
+5. **Crash reports**: panics reported automatically (opt-in, no personal
+   data), so failures on players' machines are not lost. Done 2026-10-20:
+   a panic writes `crash-report.txt` to the data folder; with OPTIONS >
+   SEND CRASH REPORTS on, the next start sends it to the Warpzone server's
+   feedback inbox (`crates/game/src/crash.rs`). Open: forward that inbox
+   to GitHub issues.
 
 ## macOS support
 

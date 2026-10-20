@@ -51,8 +51,47 @@ pub fn join(net: &mut NetSession<NetWorld>, value: &str) {
     }
 }
 
+/// What the launcher asked us to join, as a value [`join`] takes: a private
+/// game's code (`--warpzone-code`, which also finds a listed room that
+/// wants one), else the room with its invite secret, else the room.
+pub fn launch_join(intent: &tfp_net::warpzone_core::launch::Intent) -> Option<String> {
+    if let Some(code) = &intent.code {
+        return Some(code.clone());
+    }
+    let room = intent.join.as_ref()?;
+    Some(match &intent.secret {
+        Some(s) => format!("warpzone://join/{room}#{s}"),
+        None => room.clone(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    use tfp_net::warpzone_core::launch::from_args;
+
+    #[test]
+    fn launch_targets() {
+        let j = |a: &[&str]| super::launch_join(&from_args(a));
+        assert_eq!(j(&[]), None);
+        assert_eq!(
+            j(&["--warpzone-join", "v7thncejf4"]).as_deref(),
+            Some("v7thncejf4")
+        );
+        assert_eq!(
+            j(&["warpzone://join/v7thncejf4#s3cret"]).as_deref(),
+            Some("warpzone://join/v7thncejf4#s3cret")
+        );
+        assert_eq!(j(&["--warpzone-code", "k7qm3x"]).as_deref(), Some("K7QM3X"));
+        assert_eq!(
+            j(&["--warpzone-join", "v7thncejf4", "--warpzone-code=K7QM3X"]).as_deref(),
+            Some("K7QM3X")
+        );
+        // What the session makes of an invite value again.
+        let i = from_args(&["--warpzone-join", "warpzone://join/v7thncejf4#s3cret"]);
+        assert_eq!(i.join.as_deref(), Some("v7thncejf4"));
+        assert_eq!(i.secret.as_deref(), Some("s3cret"));
+    }
+
     #[test]
     fn codes_and_rooms() {
         assert!(super::is_code("K7QM3X"));

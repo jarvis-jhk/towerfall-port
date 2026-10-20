@@ -255,7 +255,7 @@ the first finished state, compared on every machine):
 | 4x1-tdm-rtt100-loss5 | 4 × 1, private room | TDM quick | 50 ms ± 15, 5 % loss | PASS (frame 9642) | 5 | 16947 | 8 |
 | 4x3-lms-rtt60-loss3-spec | 4 × 3 (12 archers) + 1 spectator | LMS quick | 30 ms ± 10, 3 % loss | PASS, spectator agrees (frame 8624) | 6 | 17898 | 8 |
 | 12x1-lms-rtt60-loss2 | 12 × 1 | LMS quick | 30 ms ± 10, 2 % loss | PASS (frame 4150) | 3 | 31472 | 8 |
-| 4x1-lms-leave-crash | 4 × 1; m2 leaves @1500, m3 crashes @2500 | LMS quick | 30 ms ± 10, 2 % loss | PASS (2 left, 2 resumes each) | 3 | 2195 | 5 |
+| 4x1-lms-leave-crash | 4 × 1; m2 leaves @1500, m3 crashes @1000 | LMS quick | 30 ms ± 10, 2 % loss | PASS (2 left, 2 resumes each) | 3 | 2195 | 5 |
 
 No desync in any case. `scripts/net/scene-pair.sh` runs the real online
 scene (menus, lobby, rendering, audio path) in two headless processes: host

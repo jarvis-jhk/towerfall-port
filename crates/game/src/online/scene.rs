@@ -1474,7 +1474,7 @@ impl OnlineScene {
             }
         }
         let intent = tfp_net::warpzone_core::launch::from_args(&self.opts.args);
-        self.pending_join = intent.join;
+        self.pending_join = super::launch_join(&intent);
         self.pending_host = intent.host || self.opts.host;
         Ok(())
     }

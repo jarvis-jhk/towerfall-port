@@ -112,6 +112,13 @@ Living plan. Update when a step finishes.
       (0,-1); enemy debris/corpse props (skull, hat, crystal shard, staff)
       not spawned; a few presentation-only effects (Reaper glow/flash,
       cultist mud-run particles).
+      2026-10-20: warpzone-core 0.1.2+ -> 0.1.11 (room-event ordering, host
+      heartbeat loss, feedback API); `--warpzone-code` from the launcher
+      joins by code and invite-link secrets survive the hand-off
+      (`online::launch_join`); crash reports (`crash.rs`, opt-in option
+      SEND CRASH REPORTS, sent through Warpzone feedback); game-matrix
+      leave-crash case crashes at frame 1000 (the quick match could end
+      before 2500).
 
 ## Final verification (2026-10-17, this tree)
 

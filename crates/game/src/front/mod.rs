@@ -125,6 +125,8 @@ pub struct Options {
     pub hold_to_pause: bool,
     pub discovery: bool,
     pub rumble: bool,
+    /// Ours: send crash reports (crash.rs); off until the player turns it on.
+    pub crash_reports: bool,
     /// Ours: 4 / 8 / 12 archers, or by the number of devices.
     pub capacity: Capacity,
     /// Ours: the shared-keyboard layout pair instead of the original's.
@@ -152,6 +154,7 @@ impl Default for Options {
             hold_to_pause: false,
             discovery: true,
             rumble: true,
+            crash_reports: false,
             capacity: Capacity::Auto,
             shared_keyboard: false,
             keys: KeyboardSetup::default(),

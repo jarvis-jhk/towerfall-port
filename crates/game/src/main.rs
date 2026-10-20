@@ -8,6 +8,7 @@ mod audio;
 mod boot;
 mod content;
 mod coop_ui;
+mod crash;
 mod demo;
 mod flow;
 mod front;
@@ -527,6 +528,13 @@ fn main() -> Result<()> {
     }
     if let Some(p) = &records {
         println!("records: {}", p.display());
+    }
+    // Crash reports (crash.rs): windowed runs only.
+    if !args.headless {
+        crash::install();
+        if crash::enabled(options.crash_reports) {
+            crash::send_pending();
+        }
     }
     let mut demo_scene;
     let mut front_scene;

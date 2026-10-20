@@ -64,6 +64,7 @@ pub fn to_text(o: &Options) -> String {
     kv("hold_to_pause", o.hold_to_pause.to_string());
     kv("discovery", o.discovery.to_string());
     kv("rumble", o.rumble.to_string());
+    kv("crash_reports", o.crash_reports.to_string());
     kv(
         "capacity",
         match o.capacity {
@@ -141,6 +142,7 @@ pub fn from_text(text: &str) -> Options {
             "hold_to_pause" => o.hold_to_pause = b,
             "discovery" => o.discovery = b,
             "rumble" => o.rumble = b,
+            "crash_reports" => o.crash_reports = b,
             "capacity" => {
                 o.capacity = match v.parse::<usize>() {
                     Ok(n @ (4 | 8 | 12)) => Capacity::Fixed(n),
@@ -339,6 +341,7 @@ mod tests {
             scale: ScaleMode::Integer,
             fullscreen: true,
             capacity: Capacity::Fixed(12),
+            crash_reports: true,
             ..Default::default()
         };
         o.keys = KeyboardSetup::shared();

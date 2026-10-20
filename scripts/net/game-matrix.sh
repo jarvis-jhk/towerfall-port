@@ -39,7 +39,7 @@ declare -a CASES=(
   "3m-cataclysm-lms|--locals 2,1,1 --mode lms --length quick --tower cataclysm --delay 30 --jitter 10 --loss 3 --max-frames 18000"
   "2x1-darkworld-level1|--locals 2x1 --kind darkworld --coop-index 0 --dw-assist 0 --until-level 1 --delay 30 --jitter 10 --loss 2 --max-frames 18000"
   "2x1-darkworld-continue|--locals 2x1 --kind darkworld --coop-index 1 --dw-level 1 --dw-menu continue --delay 30 --loss 2 --max-frames 9000"
-  "4x1-lms-leave-crash|--locals 4x1 --mode lms --length quick --delay 30 --jitter 10 --loss 2 --leave 2@1500 --crash 3@2500"
+  "4x1-lms-leave-crash|--locals 4x1 --mode lms --length quick --delay 30 --jitter 10 --loss 2 --leave 2@1500 --crash 3@1000"
 )
 FAIL=0
 for c in "${CASES[@]}"; do

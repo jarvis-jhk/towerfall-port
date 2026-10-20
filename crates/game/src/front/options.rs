@@ -21,6 +21,8 @@ enum Row {
     Flash,
     Scroll,
     Vsync,
+    /// Ours: send the report of a crash on the next start (crash.rs).
+    CrashReports,
     HoldToPause,
     Discovery,
     Rumble,
@@ -44,6 +46,7 @@ impl Row {
             Row::Flash => "SCREEN FLASH EFFECTS",
             Row::Scroll => "SCREEN SCROLL EFFECTS",
             Row::Vsync => "VERTICAL SYNC",
+            Row::CrashReports => "SEND CRASH REPORTS",
             Row::HoldToPause => "HOLD TO PAUSE",
             Row::Discovery => "GAMEPAD DISCOVERY",
             Row::Rumble => "GAMEPAD RUMBLE",
@@ -63,6 +66,7 @@ impl Row {
             Row::Flash => o.screen_flash,
             Row::Scroll => o.screen_scroll,
             Row::Vsync => o.vsync,
+            Row::CrashReports => o.crash_reports,
             Row::HoldToPause => o.hold_to_pause,
             Row::Discovery => o.discovery,
             Row::Rumble => o.rumble,
@@ -193,6 +197,7 @@ impl OptionsMenu {
                 Row::Flash,
                 Row::Scroll,
                 Row::Vsync,
+                Row::CrashReports,
             ]
         };
         Self {
@@ -295,6 +300,7 @@ impl Screen for OptionsMenu {
                         o.vsync = v;
                         self.vsync_dialog = true;
                     }
+                    Row::CrashReports => o.crash_reports = v,
                     Row::HoldToPause => o.hold_to_pause = v,
                     Row::Discovery => o.discovery = v,
                     Row::Rumble => o.rumble = v,
